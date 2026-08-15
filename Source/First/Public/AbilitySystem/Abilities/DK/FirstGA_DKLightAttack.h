@@ -94,6 +94,11 @@ private:
 	bool bComboWindowOpen = false;
 	bool bWantsNextCombo = false;
 	
+	// 本段的 ComboWindow 是否已经关闭。
+	// false：窗口还没结束，收到的攻击输入会被缓存；
+	// true：窗口已经结束，之后的攻击输入直接丢弃。
+	bool bComboWindowPassed = false;
+	
 	// 当前正在播放的攻击蒙太奇。
 	UPROPERTY()
 	TObjectPtr<UAnimMontage> CurrentAttackMontage;

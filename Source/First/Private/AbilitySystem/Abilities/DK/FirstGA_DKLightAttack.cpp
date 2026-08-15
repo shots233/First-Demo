@@ -40,9 +40,7 @@ void UFirstGA_DKLightAttack::ActivateAbility(
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 
 	UDKCombatComponent* CombatComponent = GetDKCombatComponentFromActorInfo();
-	ADKWeapon* Weapon = CombatComponent
-		? CombatComponent->GetDKCurrentEquippedWeapon()
-		: nullptr;
+	ADKWeapon* Weapon = CombatComponent? CombatComponent->GetDKCurrentEquippedWeapon(): nullptr;
 
 	if (!Weapon || Weapon->DKWeaponData.LightAttackMontages.IsEmpty())
 	{
@@ -59,6 +57,7 @@ void UFirstGA_DKLightAttack::ActivateAbility(
 	CurrentComboStep = 1;
 	bComboWindowOpen = false;
 	bWantsNextCombo = false;
+	bComboWindowPassed = false;
 	CurrentAttackMontage = nullptr;
 	bTransitionToNextComboStep = false;
 
@@ -125,17 +124,21 @@ void UFirstGA_DKLightAttack::StartCurrentComboStep()
 		FinishAttack(true);
 		return;
 	}
+
 	// Attack_1 → Attack_2 时，不允许上一段的取消窗口泄漏到下一段前摇。
 	ClearActionCancelTags();
 	
 	bComboWindowOpen = false;
+	// 新一段攻击开始时，窗口还没有过去，允许缓存输入。
+	bComboWindowPassed = false;
 	bWantsNextCombo = false;
+	// 结束上一段遗留的输入任务：任务有明确生命周期，避免多个任务累积。
 	if (ComboInputTask)
 	{
 		ComboInputTask->EndTask();
 		ComboInputTask = nullptr;
 	}
-
+	
 	// 保存本段正在播放的 Montage，后续 ComboWindow 结束时会停止它。
 	CurrentAttackMontage = Weapon->DKWeaponData.LightAttackMontages[MontageIndex];
 	
@@ -146,6 +149,13 @@ void UFirstGA_DKLightAttack::StartCurrentComboStep()
 	MontageTask->OnInterrupted.AddDynamic(this, &ThisClass::HandleMontageCancelled);
 	MontageTask->OnCancelled.AddDynamic(this, &ThisClass::HandleMontageCancelled);
 	MontageTask->ReadyForActivation();
+	
+	//本段一开始就创建输入监听，而不是等 ComboWindow 打开。
+	// 这样起手阶段按下的攻击键也会被缓存，不再需要精确卡窗口。
+	ComboInputTask = UAbilityTask_WaitInputPress::WaitInputPress(this, false);
+	ComboInputTask->OnPress.AddDynamic(this, &ThisClass::HandleComboInputPressed);
+	ComboInputTask->ReadyForActivation();
+	
 }
 
 void UFirstGA_DKLightAttack::AddActionCancelTags(const FGameplayTagContainer& TagsToAdd)
@@ -286,23 +296,14 @@ void UFirstGA_DKLightAttack::HandleMeleeHit(FGameplayEventData Payload)
 // 作用：动画进入可接招区间时，才创建一次 WaitInputPress。
 void UFirstGA_DKLightAttack::HandleComboWindowOpened(FGameplayEventData Payload)
 {
-	
-	UE_LOG(
-	LogTemp,
-	Warning,
-	TEXT("[ComboTrace][GA] Window opened | IsActive=%d | WasOpen=%d"),
-	IsActive(),
-	bComboWindowOpen
-);
-	if (!IsActive() || bComboWindowOpen || bWantsNextCombo)
+	if (!IsActive())
 	{
 		return;
 	}
-
+	
 	bComboWindowOpen = true;
-	ComboInputTask = UAbilityTask_WaitInputPress::WaitInputPress(this, false);
-	ComboInputTask->OnPress.AddDynamic(this, &ThisClass::HandleComboInputPressed);
-	ComboInputTask->ReadyForActivation();
+	
+	UE_LOG(LogTemp,Warning,TEXT("[ComboTrace][GA] Window opened | IsActive=%d | WasOpen=%d"),IsActive(),bComboWindowOpen);
 }
 
 void UFirstGA_DKLightAttack::HandleActionCancelWindowOpened(FGameplayEventData Payload)
@@ -323,17 +324,13 @@ void UFirstGA_DKLightAttack::HandleActionCancelWindowClosed(FGameplayEventData P
 // 作用：动画离开接招区间时取消尚未触发的输入任务，严格拒绝窗口外输入。
 void UFirstGA_DKLightAttack::HandleComboWindowClosed(FGameplayEventData Payload)
 {
+	bComboWindowOpen = false;
+	// 窗口已经结束：之后的输入不再进入缓存。
+	bComboWindowPassed = true;
 	
 	UE_LOG(LogTemp,Warning,TEXT("[ComboTrace][GA] Window closed | WantsNext=%d"),bWantsNextCombo);
 	
-	bComboWindowOpen = false;
-	if (ComboInputTask)
-	{
-		ComboInputTask->EndTask();
-		ComboInputTask = nullptr;
-	}
-	
-	// 玩家在窗口内按过攻击，且动画正到达“后摇开始前”的窗口结束点。
+	// 玩家在窗口关闭前按过攻击，且动画正到达“后摇开始前”的窗口结束点。
 	// 此时主动结束旧 Montage，跳过后摇。
 	if (bWantsNextCombo)
 	{
@@ -344,36 +341,29 @@ void UFirstGA_DKLightAttack::HandleComboWindowClosed(FGameplayEventData Payload)
 // 作用：只记录玩家在有效窗口内确实再次按下；是否跳到下一段等当前 Montage 完成再决定。
 void UFirstGA_DKLightAttack::HandleComboInputPressed(float TimeWaited)
 {
-	UE_LOG(
-	LogTemp,
-	Warning,
-	TEXT("[ComboTrace][GA] Input received in combo task | WindowOpen=%d | TimeWaited=%.3f"),
-	bComboWindowOpen,
-	TimeWaited
-);
-	if (!bComboWindowOpen)
+	UE_LOG(LogTemp,Warning,TEXT("[ComboTrace][GA] Input received | Passed=%d | WantsNext=%d | TimeWaited=%.3f"),
+		bComboWindowPassed,bWantsNextCombo,TimeWaited);
+	
+	// 已经缓存过一次，或窗口已经关闭：后续输入直接忽略。
+	if (bWantsNextCombo || bComboWindowPassed)
 	{
 		return;
 	}
 
 	bWantsNextCombo = true;
-	bComboWindowOpen = false;
-	ComboInputTask = nullptr;
+	// 注意：这里不再把 ComboInputTask 置空，也不再结束它。
+	// 任务继续存活，用于接收“窗口关闭前”的输入；
+	// 清理统一交给 StartCurrentComboStep 和 EndAbility。
 }
 
 // 作用：本段正常结束后，若已缓存输入且还有 Montage，则进入下一段；否则结束连击。
 void UFirstGA_DKLightAttack::HandleMontageCompleted()
 {
 	UDKCombatComponent* CombatComponent = GetDKCombatComponentFromActorInfo();
-	ADKWeapon* Weapon = CombatComponent
-		? CombatComponent->GetDKCurrentEquippedWeapon()
-		: nullptr;
+	ADKWeapon* Weapon = CombatComponent? CombatComponent->GetDKCurrentEquippedWeapon(): nullptr;
 
-	const int32 MontageCount = Weapon
-		? Weapon->DKWeaponData.LightAttackMontages.Num()
-		: 0;
-	UE_LOG(LogTemp,Warning,TEXT("[ComboTrace][GA] Montage completed | Step=%d | WantsNext=%d | MontageCount=%d")
-		,CurrentComboStep,bWantsNextCombo,MontageCount);
+	const int32 MontageCount = Weapon? Weapon->DKWeaponData.LightAttackMontages.Num(): 0;
+	UE_LOG(LogTemp,Warning,TEXT("[ComboTrace][GA] Montage completed | Step=%d | WantsNext=%d | MontageCount=%d"),CurrentComboStep,bWantsNextCombo,MontageCount);
 	
 	FinishAttack(false);
 }
@@ -430,8 +420,10 @@ void UFirstGA_DKLightAttack::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	CurrentComboStep = 0;
 	bComboWindowOpen = false;
 	bWantsNextCombo = false;
+	bComboWindowPassed = false;
 	CurrentAttackMontage = nullptr;
 	bTransitionToNextComboStep = false;
+	
 	
 	
 	// 攻击正常结束、被 Dodge 取消、死亡打断时都会走到这里。

@@ -33,15 +33,6 @@ private:
 	void Input_JumpStarted(const FInputActionValue& Value);
 	void Input_JumpCompleted(const FInputActionValue& Value);
 
-	// 作用：按下 Shift 时开始计算按住时长；达到阈值后才进入奔跑。
-	void Input_RunStarted(const FInputActionValue& Value);
-	// 作用：正常松开 Shift；长按分支停止奔跑，短按分支触发一次闪避。
-	void Input_RunCompleted(const FInputActionValue& Value);
-	// 作用：输入被窗口切换等原因取消时只清理奔跑，不把取消误判成闪避。
-	void Input_RunCanceled(const FInputActionValue& Value);
-	// 作用：Shift 持续按住达到阈值后进入奔跑状态。
-	void HandleRunHoldThresholdReached();
-
 	// 作用：按下字母区上方的 1 键时，根据当前装备状态选择装备或卸下 Ability。
 	void Input_ToggleSword(const FInputActionValue& Value);
 	
@@ -54,6 +45,19 @@ private:
 	
 	// 统一修改跑步状态与移动速度，避免多个输入函数直接写 MaxWalkSpeed。
 	void SetRunning(bool bNewRunning);
+	
+	// 计时器到点：如果闪避键仍未松开，进入奔跑。
+	void HandleDodgeHoldElapsed();
+	
+	// 闪避键是否仍被按住。
+	// true 表示玩家在闪避播放期间没有松开，闪避结束后应进入奔跑。
+	bool bDodgeInputHeld = false;
+	
+	// “闪避结束后检查是否仍按住”的计时器。
+	// 在按下时启动，在松开时清除。
+	FTimerHandle DodgeHoldRunTimerHandle;
+	
+	
 	
 	// 相机摇臂负责保存镜头距离、偏移，并处理墙体碰撞。
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Camera",meta=(AllowPrivateAccess="true"))
@@ -73,25 +77,10 @@ private:
 	// Shift 长按成立后使用的速度。
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly,Category="Character Data|Movement", meta=(AllowPrivateAccess="true"))
 	float RunSpeed = 500.f;
-
-	// 短于该时间松开 Shift 视为闪避；达到该时间仍按住才进入奔跑。
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly,Category="Character Data|Movement",
-		meta=(AllowPrivateAccess="true", ClampMin="0.05", UIMin="0.05", UIMax="0.5"))
-	float RunHoldThreshold = 0.1f;
 	
 	// 当前是否已经通过长按进入跑步状态。只作为角色本地移动状态，不需要进入 GAS。
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly,Category="Character Data|Movement", meta=(AllowPrivateAccess="true"))
 	bool bIsRunning = false;
-
-	// 记录 Shift 物理键是否仍按住，避免 Timer 到点后在已经松开时误启动奔跑。
-	bool bRunInputHeld = false;
-
-	// 区分本次 Shift 手势已经走长按分支，还是松开时应走短按闪避分支。
-	bool bRunActivatedByHold = false;
-
-	// 管理短按/长按分界计时；松开或取消输入时必须清理。
-	FTimerHandle RunHoldTimerHandle;
-	
 	
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UDKCombatComponent> DKCombatComponent;
@@ -108,6 +97,10 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Combat|Dodge", meta=(AllowPrivateAccess="true"))
 	float DodgeDuration = 0.35f;
+	
+	// 闪避结束前多少秒提前进入奔跑判定，用于消除“闪避完停顿一下才跑”的间隙。
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Combat|Dodge",meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0", UIMax="0.3"))
+	float DodgeRunOverlap = 0.18f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Combat|Dodge", meta=(AllowPrivateAccess="true"))
 	bool bDodgeUsesRootMotion = false;

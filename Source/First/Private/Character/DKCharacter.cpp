@@ -108,27 +108,6 @@ void ADKCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 
 	FirstInput->BindNativeInputAction(
 		InputConfigDataAsset,
-		MyGameplayTags::InputTag_Run,
-		ETriggerEvent::Started,
-		this,
-		&ThisClass::Input_RunStarted);
-
-	FirstInput->BindNativeInputAction(
-		InputConfigDataAsset,
-		MyGameplayTags::InputTag_Run,
-		ETriggerEvent::Completed,
-		this,
-		&ThisClass::Input_RunCompleted);
-
-	FirstInput->BindNativeInputAction(
-		InputConfigDataAsset,
-		MyGameplayTags::InputTag_Run,
-		ETriggerEvent::Canceled,
-		this,
-		&ThisClass::Input_RunCanceled);
-
-	FirstInput->BindNativeInputAction(
-		InputConfigDataAsset,
 		MyGameplayTags::InputTag_ToggleSword,
 		ETriggerEvent::Started,
 		this,
@@ -181,67 +160,6 @@ void ADKCharacter::Input_JumpCompleted(const FInputActionValue& Value)
 	StopJumping();
 }
 
-// 作用：记录 Shift 按下并启动一次性 Timer；尚未到阈值时仍保持步行。
-void ADKCharacter::Input_RunStarted(const FInputActionValue& Value)
-{
-	bRunInputHeld = true;
-	bRunActivatedByHold = false;
-	SetRunning(false);
-
-	GetWorldTimerManager().ClearTimer(RunHoldTimerHandle);
-	if (RunHoldThreshold <= KINDA_SMALL_NUMBER)
-	{
-		HandleRunHoldThresholdReached();
-		return;
-	}
-
-	// Timer 只负责判断“是否按够时间”；奔跑持续多久由 Shift 的松开边沿决定。
-	GetWorldTimerManager().SetTimer(
-		RunHoldTimerHandle,
-		this,
-		&ThisClass::HandleRunHoldThresholdReached,
-		RunHoldThreshold,
-		false);
-}
-
-// 作用：正常松开 Shift，并在“停止奔跑”和“触发闪避”之间只选择一个分支。
-void ADKCharacter::Input_RunCompleted(const FInputActionValue& Value)
-{
-	const bool bShouldDodge = bRunInputHeld && !bRunActivatedByHold;
-
-	GetWorldTimerManager().ClearTimer(RunHoldTimerHandle);
-	bRunInputHeld = false;
-	bRunActivatedByHold = false;
-	SetRunning(false);
-
-	if (bShouldDodge)
-	{
-		// 闪避仍是独立 GameplayAbility；这里只把短按手势翻译为它原有的输入 Tag。
-		TriggerAbilityInputTap(MyGameplayTags::InputTag_Dodge);
-	}
-}
-
-// 作用：处理失去焦点等 Canceled 边沿，只恢复步行，不产生一次非玩家意图的闪避。
-void ADKCharacter::Input_RunCanceled(const FInputActionValue& Value)
-{
-	GetWorldTimerManager().ClearTimer(RunHoldTimerHandle);
-	bRunInputHeld = false;
-	bRunActivatedByHold = false;
-	SetRunning(false);
-}
-
-// 作用：Timer 到点时再次确认 Shift 仍按住，然后将移动速度切换到 RunSpeed。
-void ADKCharacter::HandleRunHoldThresholdReached()
-{
-	if (!bRunInputHeld || bRunActivatedByHold)
-	{
-		return;
-	}
-
-	bRunActivatedByHold = true;
-	SetRunning(true);
-}
-
 // 作用：让同一个 1 键根据当前状态调用装备或卸下 Ability，而不是同时触发两者。
 void ADKCharacter::Input_ToggleSword(const FInputActionValue& Value)
 {
@@ -262,10 +180,23 @@ void ADKCharacter::Input_ToggleSword(const FInputActionValue& Value)
 // 作用：转发仍由 DataAsset 直接绑定的 Ability 输入；当前主要是鼠标左键轻攻击。
 void ADKCharacter::Input_AbilityInputPressed(FGameplayTag InputTag)
 {
-	// 这三个 Tag 已改由 Shift 手势和 1 键切换函数产生。
-	// 即使 DataAsset 暂时残留旧条目，也不允许 Alt/E/Q 绕过新输入规则直接激活 Ability。
-	if (InputTag == MyGameplayTags::InputTag_Dodge ||
-		InputTag == MyGameplayTags::InputTag_EquipSword ||
+	// 闪避改为“按下立即触发 + 长按衔接奔跑”，不再由 Shift 手势生成。
+	if (InputTag == MyGameplayTags::InputTag_Dodge)
+	{
+		// 记录按键仍被按住，供闪避结束后的奔跑判定使用。
+		bDodgeInputHeld = true;
+		
+		// 提前进入奔跑的窗口，让闪避结尾和奔跑起始重叠。
+		// 数值越小越接近原来的行为；数值越大，奔跑介入越早。
+		const float DodgeHoldDuration = FMath::Max((DodgeMontage ? DodgeMontage->GetPlayLength() : GetDodgeDuration()) - DodgeRunOverlap,0.05f);
+		
+		GetWorldTimerManager().SetTimer(DodgeHoldRunTimerHandle,this,&ThisClass::HandleDodgeHoldElapsed,DodgeHoldDuration,false);
+	}
+	
+	// 装备/卸下仍由 1 键切换函数产生；
+	// 即使 DataAsset 暂时残留旧条目，也不允许它们绕过新的切换规则。
+	
+	if (InputTag == MyGameplayTags::InputTag_EquipSword ||
 		InputTag == MyGameplayTags::InputTag_UnequipSword)
 	{
 		return;
@@ -273,8 +204,8 @@ void ADKCharacter::Input_AbilityInputPressed(FGameplayTag InputTag)
 
 	if (FirstAbilitySystemComponent)
 	{
-		// 角色只转发 Tag。ASC 会找到匹配的已授予 Spec：未装备剑时没有攻击 Spec，
-		// 因此左键不需要额外 if 判断就会自然失效。
+		// 角色只转发 Tag。ASC 会找到匹配的已授予 Spec。
+		// 闪避在这里被按下边沿立即激活，不再等待松开。
 		FirstAbilitySystemComponent->OnAbilityInputPressed(InputTag);
 	}
 }
@@ -282,9 +213,15 @@ void ADKCharacter::Input_AbilityInputPressed(FGameplayTag InputTag)
 // 作用：把直接绑定 Ability 输入的松开边沿转发给 ASC，供等待松开类 AbilityTask 使用。
 void ADKCharacter::Input_AbilityInputReleased(FGameplayTag InputTag)
 {
-	if (InputTag == MyGameplayTags::InputTag_Dodge ||
-		InputTag == MyGameplayTags::InputTag_EquipSword ||
-		InputTag == MyGameplayTags::InputTag_UnequipSword)
+	// 松开闪避键：结束“长按奔跑”的判定并恢复步行。
+	if (InputTag == MyGameplayTags::InputTag_Dodge)
+	{
+		bDodgeInputHeld = false;
+		GetWorldTimerManager().ClearTimer(DodgeHoldRunTimerHandle);
+		SetRunning(false);
+	}
+	
+	if (InputTag == MyGameplayTags::InputTag_EquipSword || InputTag == MyGameplayTags::InputTag_UnequipSword)
 	{
 		return;
 	}
@@ -294,6 +231,15 @@ void ADKCharacter::Input_AbilityInputReleased(FGameplayTag InputTag)
 		// Released 对长按技能和 AbilityTask_WaitInputRelease 有用；连击最小版本
 		// 主要监听 Press，但仍应完整转发两个边沿事件。
 		FirstAbilitySystemComponent->OnAbilityInputReleased(InputTag);
+	}
+	
+}
+
+void ADKCharacter::HandleDodgeHoldElapsed()
+{
+	if (bDodgeInputHeld)
+	{
+		SetRunning(true);
 	}
 }
 
@@ -324,3 +270,4 @@ void ADKCharacter::SetRunning(bool bNewRunning)
 	// 动画蓝图只读取速度，不直接决定角色能跑多快。
 	Movement->MaxWalkSpeed = bIsRunning ? RunSpeed : WalkSpeed;
 }
+
