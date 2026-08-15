@@ -12,3 +12,14 @@ Saved
 *.suo
 *.xcodeproj
 *.xcworkspace
+# JetBrains IDE
+.idea/
+
+# 用户级 VS 设置
+*.DotSettings.user
+
+# 根目录外部素材/工具（确认不需要入库后保留这行）
+Asset/
+
+# 超过 GitHub 100MB 限制的预览视频
+Content/SwordAnimsetPro/Demo/Preview/*.mp4

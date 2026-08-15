@@ -46,7 +46,7 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Input")
 	TObjectPtr<UInputMappingContext> DefaultMappingContext;
 	
-	// Move、Look、Jump：由 Character 直接处理，不经过 GAS。
+	// Move、Look、Jump、Run：由 Character 直接处理，不经过 GAS。
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Input",meta=(TitleProperty="InputTag"))
 	TArray<FFirstInputActionConfig> NativeInputActions;
 	
