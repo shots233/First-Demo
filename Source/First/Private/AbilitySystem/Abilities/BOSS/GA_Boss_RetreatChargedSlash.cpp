@@ -18,6 +18,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Items/Weapons/FirstWeaponBase.h"
 #include "MyGameplayTags.h"
+#include "TimerManager.h"
 
 UGA_Boss_RetreatChargedSlash::UGA_Boss_RetreatChargedSlash()
 {
@@ -44,6 +45,9 @@ UGA_Boss_RetreatChargedSlash::UGA_Boss_RetreatChargedSlash()
 	CooldownTags.AddTag(
 		MyGameplayTags::Boss_Cooldown_Attack_RetreatChargedSlash);
 	CooldownDuration = 10.f;
+
+	// 接招链默认接四连斩；GA 类默认值里换标签即可改接其它招式（低耦合）。
+	ChainAttackTag = MyGameplayTags::Boss_Ability_Attack_FourCombo;
 
 	// 目标超过 900cm 时仍保留 AttackTarget，但实际前冲始终封顶为 650cm。
 	// 实际终点仍由双方胶囊半径和 SurfaceGap 计算，不会把 BOSS 拉进目标身体。
@@ -462,15 +466,22 @@ void UGA_Boss_RetreatChargedSlash::HandleMeleeHit(
 
 void UGA_Boss_RetreatChargedSlash::HandleMontageCompleted()
 {
-	if (IsActive())
+	if (!IsActive())
 	{
-		EndAbility(
-			CurrentSpecHandle,
-			CurrentActorInfo,
-			CurrentActivationInfo,
-			true,
-			false);
+		return;
 	}
+
+	// 接招只发生在"正常演出完毕"路径：破韧/死亡等打断走 HandleMontageInterrupted，
+	// 绝不接招。掷点与调度必须在 EndAbility 之前——本能力的 CurrentActorInfo
+	// 在结束后不再可靠。
+	TryScheduleChainAttack();
+
+	EndAbility(
+		CurrentSpecHandle,
+		CurrentActorInfo,
+		CurrentActivationInfo,
+		true,
+		false);
 }
 
 void UGA_Boss_RetreatChargedSlash::HandleMontageInterrupted()
@@ -484,6 +495,73 @@ void UGA_Boss_RetreatChargedSlash::HandleMontageInterrupted()
 			true,
 			true);
 	}
+}
+
+void UGA_Boss_RetreatChargedSlash::TryScheduleChainAttack()
+{
+	// 概率设 0 或标签未配置即视为关闭接招。
+	if (!ChainAttackTag.IsValid() || ChainAttackChance <= 0.f)
+	{
+		return;
+	}
+
+	ABossCharacter* Boss = GetBossCharacterFromActorInfo();
+	UAbilitySystemComponent* ASC = CurrentActorInfo
+		? CurrentActorInfo->AbilitySystemComponent.Get()
+		: nullptr;
+	if (!Boss || !ASC)
+	{
+		return;
+	}
+
+	// 挥空也接招（跟踪性由接续招式的 Motion Warping 吸附负责）；
+	// 但目标缺失/已死亡时接招没有意义。复用本 GA 现成的目标工具函数。
+	ACharacter* Target = ResolveCurrentTarget(Boss);
+	if (!IsTargetUsable(Target))
+	{
+		return;
+	}
+
+	if (FMath::FRand() >= ChainAttackChance)
+	{
+		return;
+	}
+
+	// 延迟期间保持 Boss.Status.Attacking：这是 BT 的 bIsBusy 判定来源，
+	// 压住接招间隙，避免行为树抢在接续招式前选新招/恢复移动/转身。
+	// 本能力的 ActivationOwnedTags 会在随后的 EndAbility 里摘掉该标签，
+	// 这里补一个 Loose 计数把窗口续上；接续失败路径统一归还。
+	ASC->AddLooseGameplayTag(MyGameplayTags::Boss_Status_Attacking);
+
+	TWeakObjectPtr<UAbilitySystemComponent> WeakASC(ASC);
+	const FGameplayTag TagToChain = ChainAttackTag;
+	FTimerHandle ChainTimerHandle;
+	Boss->GetWorldTimerManager().SetTimer(
+		ChainTimerHandle,
+		FTimerDelegate::CreateWeakLambda(Boss,
+			[WeakASC, TagToChain]()
+			{
+				UAbilitySystemComponent* ASCPtr = WeakASC.Get();
+				if (!ASCPtr)
+				{
+					return;
+				}
+
+				// 无论激活成败先归还延迟期间的忙碌标签：
+				// 成功时接续招式自己的 OwnedTags 已把 Attacking 续上；
+				// 失败时行为树需要立刻恢复调度。
+				ASCPtr->RemoveLooseGameplayTag(
+					MyGameplayTags::Boss_Status_Attacking);
+
+				FGameplayTagContainer ChainTags;
+				ChainTags.AddTag(TagToChain);
+
+				// 激活失败（目标死亡/冷却中/被阻挡）静默放弃：
+				// 独立释放路径与接招路径互不干扰（四连斩自身冷却兜底）。
+				ASCPtr->TryActivateAbilitiesByTag(ChainTags, false);
+			}),
+		FMath::Max(ChainAttackDelay, 0.f),
+		false);
 }
 
 ACharacter* UGA_Boss_RetreatChargedSlash::ResolveCurrentTarget(

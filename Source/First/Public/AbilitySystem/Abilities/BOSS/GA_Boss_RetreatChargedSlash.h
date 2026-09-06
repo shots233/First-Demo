@@ -66,6 +66,28 @@ private:
 	void SetAttackDirectionLocked(bool bShouldLock);
 	void DisableWeaponAttackEffects();
 
+	// —— 蓄力斩 → 接续招式链（攻击侧扩展；行为树不参与，只通过 bIsBusy 感知）——
+
+	// 掷概率并安排延迟接招。只在蒙太奇正常播完（HandleMontageCompleted）时调用；
+	// 破韧/死亡等打断路径（HandleMontageInterrupted）绝不接招。
+	void TryScheduleChainAttack();
+
+	// 接续招式的身份标签：不硬编码具体招式类，按 Tag 激活（TryActivateAbilitiesByTag）。
+	// 想接其它招式时在 GA 类默认值里换标签即可，零代码改动。默认四连斩。
+	UPROPERTY(EditDefaultsOnly, Category="Combat|Chain")
+	FGameplayTag ChainAttackTag;
+
+	// 接招概率 [0,1]：0.5 = 50%；设 0 关闭接招。方便测试与实际手感调整。
+	UPROPERTY(EditDefaultsOnly, Category="Combat|Chain",
+		meta=(ClampMin="0.0", ClampMax="1.0"))
+	float ChainAttackChance = 0.5f;
+
+	// 蓄力斩播完到接续招式启动的延迟（秒）。延迟期间 BOSS 保持 Boss.Status.Attacking
+	//（BT 的 bIsBusy 判定来源），行为树不会在间隙里选新招或恢复移动。
+	UPROPERTY(EditDefaultsOnly, Category="Combat|Chain",
+		meta=(ClampMin="0.0", Units="s"))
+	float ChainAttackDelay = 0.5f;
+
 	UPROPERTY(EditDefaultsOnly, Category="Combat|Motion Warping")
 	FFirstAttackWarpingData AttackWarpingData;
 

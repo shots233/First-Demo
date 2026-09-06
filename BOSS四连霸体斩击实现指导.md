@@ -13,8 +13,9 @@
 | D1 | 弹反 | 弹反照常生效（玩家侧收益不变），BOSS 韧性照常削减；但四连期间弹反**不触发僵直、不打断招式** |
 | D2 | 破韧 | 韧性被打空 → 照旧直接打断四连斩（走现有 Executable 链路） |
 | D3 | 死亡 | 血量归零时死亡能力压过霸体，取消四连斩（现有框架天然满足） |
-| D4 | 出招条件 | 与三连斩一致：`FBossAttackOption`（距离段/权重/冷却），首版参数照抄三连斩 |
+| D4 | 出招条件 | 与三连斩一致：`FBossAttackOption`（距离段/权重/冷却），首版参数照抄三连斩；**独立释放保留**，与接招链并存（低耦合，后续可调） |
 | D5 | 普通受击 | 四段挥砍期间不开放受击窗口；**第四段后摇保留 ANS_HitReactWindow 作为玩家惩罚窗口** |
+| D6 | 接招链 | 蓄力斩**正常演出完毕**后按概率（首版 50%，可调）延迟（首版 0.5s，可调）接续四连斩；**挥空也接**（跟踪性由四连斩的 Motion Warping 吸附负责）；被打断（破韧/死亡）绝不接 |
 
 ### 为什么破韧/死亡不需要写任何新代码
 
@@ -239,6 +240,37 @@ FourComboDefenseData.ParryPoiseDamage = 50.f;
 
 ---
 
+## 八-2、接招链：蓄力斩 → 四连斩（D6，已实现）
+
+全部逻辑长在 `UGA_Boss_RetreatChargedSlash` 内部（攻击侧扩展），**行为树资产零改动**——
+BT 只通过现有的 `bIsBusy`（来源 `Boss.Status.Attacking`）感知"BOSS 还在忙"。
+
+### 新增的可调参数（GA 类默认值 → Combat|Chain 分组）
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `ChainAttackTag` | `Boss.Ability.Attack.FourCombo` | 接续招式的身份标签。**蓄力斩不硬编码招式类**，按 Tag 激活；想改接其它招式（或将来的新招）只需换标签，零代码 |
+| `ChainAttackChance` | `0.5` | 接招概率 [0,1]；设 0 关闭接招。测试期随手调 |
+| `ChainAttackDelay` | `0.5s` | 蓄力斩播完到四连斩启动的延迟 |
+
+### 机制要点
+
+1. **只有正常演出完毕才接**：掷点挂在 `HandleMontageCompleted`；破韧/死亡等打断走
+   `HandleMontageInterrupted`，绝不接招——被破韧打断的蓄力斩后面不会蹦出霸体四连；
+2. **延迟期间保持忙碌**：掷中概率后立即补一个 `Boss.Status.Attacking` Loose 计数
+   （蓄力斩自身 OwnedTag 在 EndAbility 时摘除，Loose 计数把窗口续上），
+   BT 的 `bIsBusy` 在整个 0.5s 间隙保持 true，不会抢着选新招/恢复移动；
+   定时器回调里无论接续成败都先归还该计数（成功时四连斩自己的 OwnedTag 无缝续上）；
+3. **挥空也接**：不做距离检查；接续前只用 `ResolveCurrentTarget` + `IsTargetUsable`
+   校验目标存在且未死亡。四连斩的 Motion Warping 吸附负责跟踪性——
+   **动画侧需要在四连斩蒙太奇里摆 Warp 窗口**（GA 已支持，参数在 GA 默认值 Combat|Motion Warping）；
+4. **接续失败静默放弃**：四连斩独立释放的冷却未转好、或激活条件不满足时，
+   `TryActivateAbilitiesByTag` 失败不重试——独立释放路径与接招路径互不干扰；
+5. **定时器安全**：`FTimerDelegate::WeakLambda(Boss, ...)` + `TWeakObjectPtr<ASC>`，
+   BOSS 销毁后回调自动失效，无悬垂。
+
+---
+
 ## 九、动画资产填充清单（作者执行）
 
 新建蒙太奇 `AM_Boss_Attack_FourCombo`（骨架与现有 BOSS 蒙太奇一致），要求：
@@ -267,6 +299,10 @@ FourComboDefenseData.ParryPoiseDamage = 50.f;
 | V6 | 四连结束后检查标签 | `showdebug abilitysystem`：Uninterruptible / Attacking 均已消失 |
 | V7 | 冷却 | 打完一轮后 8 秒内 BT 不再选中四连斩 |
 | V8 | 四连期间玩家被第 2 段命中且未防御 | 正常掉血/受击（招式对玩家的判定不受霸体影响） |
+| V9 | 蓄力斩正常播完（多次采样） | 约 50% 概率在 0.5s 后接出四连斩；`ChainAttackChance` 调 1.0/0.0 时必接/不接 |
+| V10 | 蓄力斩挥空（玩家闪避拉开） | 接招照常触发，四连斩通过 Warp 吸附追踪（需动画侧已摆 Warp 窗口） |
+| V11 | 蓄力斩被破韧打断 | 绝不接四连斩，正常进入 Executable 流程 |
+| V12 | 接招延迟的 0.5s 间隙 | BOSS 不移动、不选新招（bIsBusy 保持 true）；接续失败时行为树立刻恢复调度 |
 
 ---
 
