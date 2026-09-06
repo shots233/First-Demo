@@ -23,6 +23,11 @@ UGA_Boss_HitReact::UGA_Boss_HitReact()
 	ActivationOwnedTags.AddTag(MyGameplayTags::Boss_Status_Staggered);
 	ActivationBlockedTags.AddTag(MyGameplayTags::Boss_Status_Staggered);
 	ActivationBlockedTags.AddTag(MyGameplayTags::Shared_Status_Dead);
+
+	// 霸体窗口（ANS_SuperArmorWindow）期间即使动画误放了受击窗口也不触发打断。
+	// 双保险：四连斩前四段本就不开放受击窗口，第四段后摇的惩罚窗口不受影响
+	//（霸体窗口与受击窗口在蒙太奇里错开摆放）。
+	ActivationBlockedTags.AddTag(MyGameplayTags::Boss_Status_Uninterruptible);
 	
 	// 只有攻击后摇的受击窗口内才可被打断（D29）。
 	// ActivationRequiredTags：激活前置条件，身上没有这个标签，能力就不会激活。

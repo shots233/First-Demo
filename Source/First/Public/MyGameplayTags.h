@@ -106,9 +106,11 @@ namespace MyGameplayTags
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Ability_Attack_Normal);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Ability_Attack_ThreeCombo);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Ability_Attack_RetreatChargedSlash);
+	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Ability_Attack_FourCombo);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Cooldown_Attack_Normal);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Cooldown_Attack_ThreeCombo);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Cooldown_Attack_RetreatChargedSlash);
+	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Cooldown_Attack_FourCombo);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Event_RetreatChargedSlash_ChargeBegin);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Event_RetreatChargedSlash_Commit);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Status_AttackDirectionLocked);
@@ -119,6 +121,9 @@ namespace MyGameplayTags
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Status_HitReactWindow);
 	// BOSS受击冷却：防止窗口内连续命中无限僵直。
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Cooldown_HitReact);
+	// BOSS霸体窗口：四连斩等招式期间由 ANS_SuperArmorWindow 开关。
+	// 窗口内普通受击与弹反都不触发僵直打断；破韧与死亡不受霸体影响。
+	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Status_Uninterruptible);
     
 	//装备和解除装备事件
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Event_Weapon_AttachToHand);

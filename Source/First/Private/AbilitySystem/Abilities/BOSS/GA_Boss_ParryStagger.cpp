@@ -48,6 +48,38 @@ void UGA_Boss_ParryStagger::ActivateAbility(
 		return;
 	}
 
+	// 霸体分支（四连斩等）：弹反照常削韧，但不取消招式、不进僵直。
+	// 注意不能用 ActivationBlockedTags 拦整个能力——削韧逻辑就在本能力内部，
+	// 拦掉激活等于霸体期间弹反不削韧，违反设计决策 D1。
+	if (ASC->HasMatchingGameplayTag(MyGameplayTags::Boss_Status_Uninterruptible))
+	{
+		const float SuperArmorPoiseDamage =
+			TriggerEventData ? FMath::Max(TriggerEventData->EventMagnitude, 0.f) : 50.f;
+		AActor* SuperArmorPoiseSource =
+			TriggerEventData ? const_cast<AActor*>(TriggerEventData->Instigator.Get()) : nullptr;
+
+		const EFirstPoiseDamageResult SuperArmorPoiseResult =
+			Boss->ApplyPoiseDamage(SuperArmorPoiseDamage, SuperArmorPoiseSource);
+
+		// 破韧（D2）：Boss_Event_PoiseBroken → Executable 在同一调用栈内同步取消
+		// 包括本能力在内的攻击链。与主流程一致，退出前检查生命周期。
+		if (!IsActive())
+		{
+			return;
+		}
+
+		if (SuperArmorPoiseResult == EFirstPoiseDamageResult::Ignored)
+		{
+			// 与主流程口径一致：没有发生实际削韧时不伪装成正常结束。
+			FinishParryStagger(true);
+			return;
+		}
+
+		// Broken（未被 Executable 取消时）与 Reduced：静默结束，不播僵直，四连斩继续。
+		FinishParryStagger(false);
+		return;
+	}
+
 	// 先取消整套攻击。攻击 EndAbility 会再次兜底关闭碰撞。
 	FGameplayTagContainer AttackTags;
 	AttackTags.AddTag(MyGameplayTags::Boss_Ability_Attack);

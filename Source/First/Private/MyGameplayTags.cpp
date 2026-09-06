@@ -87,9 +87,11 @@ namespace MyGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Boss_Ability_Attack_Normal, "Boss.Ability.Attack.Normal");
 	UE_DEFINE_GAMEPLAY_TAG(Boss_Ability_Attack_ThreeCombo, "Boss.Ability.Attack.ThreeCombo");
 	UE_DEFINE_GAMEPLAY_TAG(Boss_Ability_Attack_RetreatChargedSlash, "Boss.Ability.Attack.RetreatChargedSlash");
+	UE_DEFINE_GAMEPLAY_TAG(Boss_Ability_Attack_FourCombo, "Boss.Ability.Attack.FourCombo");
 	UE_DEFINE_GAMEPLAY_TAG(Boss_Cooldown_Attack_Normal, "Boss.Cooldown.Attack.Normal");
 	UE_DEFINE_GAMEPLAY_TAG(Boss_Cooldown_Attack_ThreeCombo, "Boss.Cooldown.Attack.ThreeCombo");
 	UE_DEFINE_GAMEPLAY_TAG(Boss_Cooldown_Attack_RetreatChargedSlash, "Boss.Cooldown.Attack.RetreatChargedSlash");
+	UE_DEFINE_GAMEPLAY_TAG(Boss_Cooldown_Attack_FourCombo, "Boss.Cooldown.Attack.FourCombo");
 	UE_DEFINE_GAMEPLAY_TAG(Boss_Event_RetreatChargedSlash_ChargeBegin, "Boss.Event.RetreatChargedSlash.ChargeBegin");
 	UE_DEFINE_GAMEPLAY_TAG(Boss_Event_RetreatChargedSlash_Commit, "Boss.Event.RetreatChargedSlash.Commit");
 	UE_DEFINE_GAMEPLAY_TAG(Boss_Status_AttackDirectionLocked, "Boss.Status.AttackDirectionLocked");
@@ -98,6 +100,7 @@ namespace MyGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Boss_Status_Strafing, "Boss.Status.Strafing");
 	UE_DEFINE_GAMEPLAY_TAG(Boss_Status_HitReactWindow, "Boss.Status.HitReactWindow");
 	UE_DEFINE_GAMEPLAY_TAG(Boss_Cooldown_HitReact, "Boss.Cooldown.HitReact");
+	UE_DEFINE_GAMEPLAY_TAG(Boss_Status_Uninterruptible, "Boss.Status.Uninterruptible");
 	
 	UE_DEFINE_GAMEPLAY_TAG(DK_Event_Weapon_AttachToHand,"DK.Event.Weapon.AttachToHand");
 	UE_DEFINE_GAMEPLAY_TAG(DK_Event_Weapon_AttachToBack,"DK.Event.Weapon.AttachToBack");

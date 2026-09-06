@@ -107,6 +107,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Boss|Anim", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UAnimMontage> ThreeComboMontage;
 
+	// 四连斩（霸体招式）：单个完整四连蒙太奇（四个 Section 顺序衔接）。
+	// 挥砍段由 ANS_SuperArmorWindow 覆盖，第四段后摇放 ANS_HitReactWindow 惩罚窗口。
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Boss|Anim", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UAnimMontage> FourComboMontage;
+
 	// 后撤蓄力斩：包含后撤、蓄力预警和前冲斩击的完整蒙太奇。
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Boss|Anim", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UAnimMontage> RetreatChargedSlashMontage;
@@ -115,6 +120,7 @@ public:
 	FORCEINLINE UAnimMontage* GetDrawSwordMontage() const { return DrawSwordMontage; }
 	FORCEINLINE UAnimMontage* GetNormalAttackMontage() const { return NormalAttackMontage; }
 	FORCEINLINE UAnimMontage* GetThreeComboMontage() const { return ThreeComboMontage; }
+	FORCEINLINE UAnimMontage* GetFourComboMontage() const { return FourComboMontage; }
 
 	UFUNCTION(BlueprintPure, Category="Boss|Anim")
 	FORCEINLINE UAnimMontage* GetRetreatChargedSlashMontage() const
@@ -134,12 +140,17 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Boss|Combat", meta=(AllowPrivateAccess="true", ClampMin="0.0"))
 	float ThreeComboDamagePerHit = 22.f;
 
+	// 四连斩每段基础伤害：首版略低于三连（四段总量更高）。
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Boss|Combat", meta=(AllowPrivateAccess="true", ClampMin="0.0"))
+	float FourComboDamagePerHit = 20.f;
+
 	// 后撤蓄力斩的单次基础伤害。
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Boss|Combat", meta=(AllowPrivateAccess="true", ClampMin="0.0"))
 	float RetreatChargedSlashDamage = 35.f;
 
 	FORCEINLINE float GetNormalAttackDamage() const { return NormalAttackDamage; }
 	FORCEINLINE float GetThreeComboDamagePerHit() const { return ThreeComboDamagePerHit; }
+	FORCEINLINE float GetFourComboDamagePerHit() const { return FourComboDamagePerHit; }
 
 	UFUNCTION(BlueprintPure, Category="Boss|Combat")
 	FORCEINLINE float GetRetreatChargedSlashDamage() const
@@ -155,6 +166,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Boss|Combat|Defense",meta=(AllowPrivateAccess="true"))
 	FFirstMeleeDefenseData ThreeComboDefenseData;
 
+	// 四连斩的防御白名单与资源伤害（四段共用同一描述，逐段独立解析）。
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Boss|Combat|Defense",meta=(AllowPrivateAccess="true"))
+	FFirstMeleeDefenseData FourComboDefenseData;
+
 	// 后撤蓄力斩的防御白名单与资源伤害。
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Boss|Combat|Defense", meta=(AllowPrivateAccess="true"))
 	FFirstMeleeDefenseData RetreatChargedSlashDefenseData;
@@ -162,6 +177,8 @@ public:
 	FORCEINLINE const FFirstMeleeDefenseData& GetNormalAttackDefenseData() const{return NormalAttackDefenseData;}
 
 	FORCEINLINE const FFirstMeleeDefenseData& GetThreeComboDefenseData() const{return ThreeComboDefenseData;}
+
+	FORCEINLINE const FFirstMeleeDefenseData& GetFourComboDefenseData() const{return FourComboDefenseData;}
 
 	UFUNCTION(BlueprintPure, Category="Boss|Combat|Defense")
 	FORCEINLINE FFirstMeleeDefenseData GetRetreatChargedSlashDefenseData() const
