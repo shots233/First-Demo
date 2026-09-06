@@ -1,0 +1,31 @@
+Binaries
+DerivedDataCache
+Intermediate
+Saved
+.vscode
+.vs
+*.VC.db
+*.opensdf
+*.opendb
+*.sdf
+*.sln
+*.suo
+*.xcodeproj
+*.xcworkspace
+# JetBrains IDE
+.idea/
+
+# 用户级 VS 设置
+*.DotSettings.user
+
+# 根目录外部素材/工具（确认不需要入库后保留这行）
+Asset/
+
+# —— 商店素材包（可从 Fab/商城重新下载，不入库；恢复清单见 README.md）——
+Content/Dark_Knight/
+Content/SwordAnimsetPro/
+Content/Katana_Animations/
+Content/Rapier_AnimSet/
+Content/SlashTrail_SoftTofu/
+Content/Battle_Wounds/
+Content/Weapons_woosh/
