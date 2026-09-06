@@ -46,8 +46,8 @@ UGA_Boss_RetreatChargedSlash::UGA_Boss_RetreatChargedSlash()
 		MyGameplayTags::Boss_Cooldown_Attack_RetreatChargedSlash);
 	CooldownDuration = 10.f;
 
-	// 接招链默认接四连斩；GA 类默认值里换标签即可改接其它招式（低耦合）。
-	ChainAttackTag = MyGameplayTags::Boss_Ability_Attack_FourCombo;
+	// 接招链默认接五连斩；GA 类默认值里换标签即可改接其它招式（低耦合）。
+	ChainAttackTag = MyGameplayTags::Boss_Ability_Attack_FiveCombo;
 
 	// 目标超过 900cm 时仍保留 AttackTarget，但实际前冲始终封顶为 650cm。
 	// 实际终点仍由双方胶囊半径和 SurfaceGap 计算，不会把 BOSS 拉进目标身体。
@@ -557,7 +557,7 @@ void UGA_Boss_RetreatChargedSlash::TryScheduleChainAttack()
 				ChainTags.AddTag(TagToChain);
 
 				// 激活失败（目标死亡/冷却中/被阻挡）静默放弃：
-				// 独立释放路径与接招路径互不干扰（四连斩自身冷却兜底）。
+				// 独立释放路径与接招路径互不干扰（五连斩自身冷却兜底）。
 				ASCPtr->TryActivateAbilitiesByTag(ChainTags, false);
 			}),
 		FMath::Max(ChainAttackDelay, 0.f),

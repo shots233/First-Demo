@@ -48,12 +48,12 @@ ABossCharacter::ABossCharacter()
 	ThreeComboDefenseData.GuardStaminaDamage = 15.f;
 	ThreeComboDefenseData.ParryPoiseDamage = 50.f;
 
-	// 四连斩（霸体招式）：弹反照常削韧（ParryStagger 霸体分支），
+	// 五连斩（霸体招式）：弹反照常削韧（ParryStagger 霸体分支），
 	// 防御参数首版对齐三连斩。
-	FourComboDefenseData.bBlockable = true;
-	FourComboDefenseData.bParryable = true;
-	FourComboDefenseData.GuardStaminaDamage = 15.f;
-	FourComboDefenseData.ParryPoiseDamage = 50.f;
+	FiveComboDefenseData.bBlockable = true;
+	FiveComboDefenseData.bParryable = true;
+	FiveComboDefenseData.GuardStaminaDamage = 15.f;
+	FiveComboDefenseData.ParryPoiseDamage = 50.f;
 
 	RetreatChargedSlashDefenseData.bBlockable = true;
 	RetreatChargedSlashDefenseData.bParryable = true;

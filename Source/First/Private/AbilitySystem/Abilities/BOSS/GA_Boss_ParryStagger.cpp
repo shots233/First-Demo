@@ -48,7 +48,7 @@ void UGA_Boss_ParryStagger::ActivateAbility(
 		return;
 	}
 
-	// 霸体分支（四连斩等）：弹反照常削韧，但不取消招式、不进僵直。
+	// 霸体分支（五连斩等）：弹反照常削韧，但不取消招式、不进僵直。
 	// 注意不能用 ActivationBlockedTags 拦整个能力——削韧逻辑就在本能力内部，
 	// 拦掉激活等于霸体期间弹反不削韧，违反设计决策 D1。
 	if (ASC->HasMatchingGameplayTag(MyGameplayTags::Boss_Status_Uninterruptible))
@@ -75,7 +75,7 @@ void UGA_Boss_ParryStagger::ActivateAbility(
 			return;
 		}
 
-		// Broken（未被 Executable 取消时）与 Reduced：静默结束，不播僵直，四连斩继续。
+		// Broken（未被 Executable 取消时）与 Reduced：静默结束，不播僵直，五连斩继续。
 		FinishParryStagger(false);
 		return;
 	}

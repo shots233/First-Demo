@@ -62,6 +62,6 @@ void UANS_SuperArmorWindow::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSeq
 	}
 
 	// 离开霸体窗口。若蒙太奇被打断导致本回调漏发，
-	// GA_Boss_FourCombo::EndAbility 还有 SetLooseGameplayTagCount(0) 兜底。
+	// GA_Boss_FiveCombo::EndAbility 还有 SetLooseGameplayTagCount(0) 兜底。
 	ASC->RemoveLooseGameplayTag(MyGameplayTags::Boss_Status_Uninterruptible);
 }

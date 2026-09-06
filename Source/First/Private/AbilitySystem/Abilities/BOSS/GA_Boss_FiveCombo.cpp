@@ -1,7 +1,7 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 
-#include "AbilitySystem/Abilities/BOSS/GA_Boss_FourCombo.h"
+#include "AbilitySystem/Abilities/BOSS/GA_Boss_FiveCombo.h"
 
 #include "Abilities/GameplayAbilityTypes.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
@@ -16,7 +16,7 @@
 #include "AbilitySystem/GameplayEffects/FirstGE_BossCooldown.h"
 #include "Components/Combat/BossCombatComponent.h"
 
-UGA_Boss_FourCombo::UGA_Boss_FourCombo()
+UGA_Boss_FiveCombo::UGA_Boss_FiveCombo()
 {
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 
@@ -24,7 +24,7 @@ UGA_Boss_FourCombo::UGA_Boss_FourCombo()
 	// 非霸体弹反（ParryStagger）的统一取消路径能覆盖本招式。
 	FGameplayTagContainer AssetTags;
 	AssetTags.AddTag(MyGameplayTags::Boss_Ability_Attack);
-	AssetTags.AddTag(MyGameplayTags::Boss_Ability_Attack_FourCombo);
+	AssetTags.AddTag(MyGameplayTags::Boss_Ability_Attack_FiveCombo);
 	SetAssetTags(AssetTags);
 
 	ActivationRequiredTags.AddTag(MyGameplayTags::Boss_Status_WeaponDrawn);
@@ -38,7 +38,7 @@ UGA_Boss_FourCombo::UGA_Boss_FourCombo()
 	ActivationBlockedTags.AddTag(MyGameplayTags::Boss_Status_BeingExecuted);
 
 	CooldownGameplayEffectClass = UFirstGE_BossCooldown::StaticClass();
-	CooldownTags.AddTag(MyGameplayTags::Boss_Cooldown_Attack_FourCombo);
+	CooldownTags.AddTag(MyGameplayTags::Boss_Cooldown_Attack_FiveCombo);
 	CooldownDuration = 8.f;
 
 	// 可被系统级取消（破韧/死亡）；玩家普攻与弹反的中断路径
@@ -46,14 +46,14 @@ UGA_Boss_FourCombo::UGA_Boss_FourCombo()
 	bIsCancelable = true;
 }
 
-void UGA_Boss_FourCombo::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
+void UGA_Boss_FiveCombo::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
 	const FGameplayEventData* TriggerEventData)
 {
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 
 	ABossCharacter* Boss = GetBossCharacterFromActorInfo();
-	UAnimMontage* Montage = Boss ? Boss->GetFourComboMontage() : nullptr;
+	UAnimMontage* Montage = Boss ? Boss->GetFiveComboMontage() : nullptr;
 	if (!Boss || !Montage)
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -67,7 +67,7 @@ void UGA_Boss_FourCombo::ActivateAbility(const FGameplayAbilitySpecHandle Handle
 		return;
 	}
 
-	// 四连共享一个动态吸附会话；每个 Motion Warping 窗口都会读取持续更新后的目标。
+	// 五连共享一个动态吸附会话；每个 Motion Warping 窗口都会读取持续更新后的目标。
 	ACharacter* WarpTarget = nullptr;
 	if (AAIController* AIC = Cast<AAIController>(Boss->GetController()))
 	{
@@ -78,7 +78,7 @@ void UGA_Boss_FourCombo::ActivateAbility(const FGameplayAbilitySpecHandle Handle
 	}
 	Boss->BeginAttackWarping(WarpTarget, AttackWarpingData);
 
-	// 整个四连期间都监听命中。
+	// 整个五连期间都监听命中。
 	UAbilityTask_WaitGameplayEvent* HitTask =
 		UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(
 			this,
@@ -92,7 +92,7 @@ void UGA_Boss_FourCombo::ActivateAbility(const FGameplayAbilitySpecHandle Handle
 	UAbilityTask_PlayMontageAndWait* MontageTask =
 		UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
 			this,
-			TEXT("FourComboMontage"),
+			TEXT("FiveComboMontage"),
 			Montage);
 	MontageTask->OnCompleted.AddDynamic(this, &ThisClass::HandleMontageCompleted);
 	MontageTask->OnInterrupted.AddDynamic(this, &ThisClass::HandleMontageInterrupted);
@@ -100,11 +100,11 @@ void UGA_Boss_FourCombo::ActivateAbility(const FGameplayAbilitySpecHandle Handle
 	MontageTask->ReadyForActivation();
 }
 
-void UGA_Boss_FourCombo::EndAbility(const FGameplayAbilitySpecHandle Handle,
+void UGA_Boss_FiveCombo::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
 	bool bReplicateEndAbility, bool bWasCancelled)
 {
-	// 四连所有 Warp 窗口共用同一会话，能力的任意结束路径在这里统一清理。
+	// 五连所有 Warp 窗口共用同一会话，能力的任意结束路径在这里统一清理。
 	if (ABossCharacter* Boss = GetBossCharacterFromActorInfo())
 	{
 		Boss->EndAttackWarping();
@@ -117,7 +117,7 @@ void UGA_Boss_FourCombo::EndAbility(const FGameplayAbilitySpecHandle Handle,
 
 	// 霸体兜底：蒙太奇被打断且引擎漏发 ANS_SuperArmorWindow::NotifyEnd 时，
 	// 确保 Boss.Status.Uninterruptible 不残留。SetCount(0) 幂等；
-	// 全项目霸体来源只有四连斩一处，不会误伤其它计数。
+	// 全项目霸体来源只有五连斩一处，不会误伤其它计数。
 	// 写法对齐 GA_Boss_RetreatChargedSlash 对 HitReactWindow 的同款兜底。
 	if (UAbilitySystemComponent* ASC =
 		ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr)
@@ -128,7 +128,7 @@ void UGA_Boss_FourCombo::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
-void UGA_Boss_FourCombo::HandleMeleeHit(FGameplayEventData Payload)
+void UGA_Boss_FiveCombo::HandleMeleeHit(FGameplayEventData Payload)
 {
 	AActor* TargetActor = const_cast<AActor*>(Payload.Target.Get());
 	ABossCharacter* Boss = GetBossCharacterFromActorInfo();
@@ -137,7 +137,7 @@ void UGA_Boss_FourCombo::HandleMeleeHit(FGameplayEventData Payload)
 		return;
 	}
 
-	const EFirstDefenseResult DefenseResult = ResolveTargetDefense(TargetActor, Boss->GetFourComboDefenseData());
+	const EFirstDefenseResult DefenseResult = ResolveTargetDefense(TargetActor, Boss->GetFiveComboDefenseData());
 
 	if (DefenseResult != EFirstDefenseResult::Damaged)
 	{
@@ -147,22 +147,22 @@ void UGA_Boss_FourCombo::HandleMeleeHit(FGameplayEventData Payload)
 	// 判定为真实命中（玩家未防御成功）：播放 BP_Boss 上配置的命中音效与血花。
 	PlayBossHitPlayerFeedback(TargetActor);
 
-	FGameplayEffectSpecHandle SpecHandle = MakeBossDamageEffectSpecHandle(UFirstGE_Damage::StaticClass(), Boss->GetFourComboDamagePerHit());
+	FGameplayEffectSpecHandle SpecHandle = MakeBossDamageEffectSpecHandle(UFirstGE_Damage::StaticClass(), Boss->GetFiveComboDamagePerHit());
 
 	ApplyEffectSpecHandleToTarget(TargetActor, SpecHandle);
 }
 
-void UGA_Boss_FourCombo::HandleMontageCompleted()
+void UGA_Boss_FiveCombo::HandleMontageCompleted()
 {
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 }
 
-void UGA_Boss_FourCombo::HandleMontageInterrupted()
+void UGA_Boss_FiveCombo::HandleMontageInterrupted()
 {
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 }
 
-const FGameplayTagContainer* UGA_Boss_FourCombo::GetCooldownTags() const
+const FGameplayTagContainer* UGA_Boss_FiveCombo::GetCooldownTags() const
 {
 	return &CooldownTags;
 }

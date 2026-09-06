@@ -73,7 +73,7 @@ private:
 	void TryScheduleChainAttack();
 
 	// 接续招式的身份标签：不硬编码具体招式类，按 Tag 激活（TryActivateAbilitiesByTag）。
-	// 想接其它招式时在 GA 类默认值里换标签即可，零代码改动。默认四连斩。
+	// 想接其它招式时在 GA 类默认值里换标签即可，零代码改动。默认五连斩。
 	UPROPERTY(EditDefaultsOnly, Category="Combat|Chain")
 	FGameplayTag ChainAttackTag;
 

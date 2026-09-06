@@ -5,24 +5,24 @@
 #include "CoreMinimal.h"
 #include "AbilitySystem/Abilities/BOSS/FirstBossGameplayAbility.h"
 #include "Types/FirstCombatTypes.h"
-#include "GA_Boss_FourCombo.generated.h"
+#include "GA_Boss_FiveCombo.generated.h"
 
 /**
- * BOSS 四连斩（一个技能，霸体招式）。
- * 结构克隆自 UGA_Boss_ThreeCombo：单蒙太奇四段自动播放，共享一个 Motion Warping 会话。
- * 霸体机制（见《BOSS四连霸体斩击实现指导.md》）：
+ * BOSS 五连斩（一个技能，霸体招式）。
+ * 结构克隆自 UGA_Boss_ThreeCombo：单蒙太奇五段自动播放，共享一个 Motion Warping 会话。
+ * 霸体机制（见《BOSS五连霸体斩击实现指导.md》）：
  * - 挥砍段由动画里的 ANS_SuperArmorWindow 挂 Boss.Status.Uninterruptible；
  * - 窗口内普通受击不触发打断（GA_Boss_HitReact 被该标签阻挡）；
  * - 弹反照常削韧但不僵直不打断（GA_Boss_ParryStagger 霸体分支）；
  * - 破韧与死亡照旧打断（Executable / Death 按 Boss.Ability.Attack 父标签取消）；
- * - 第四段后摇由动画开放 ANS_HitReactWindow 作为玩家惩罚窗口。
+ * - 第五段后摇由动画开放 ANS_HitReactWindow 作为玩家惩罚窗口。
  */
 UCLASS()
-class FIRST_API UGA_Boss_FourCombo : public UFirstBossGameplayAbility
+class FIRST_API UGA_Boss_FiveCombo : public UFirstBossGameplayAbility
 {
 	GENERATED_BODY()
 public:
-	UGA_Boss_FourCombo();
+	UGA_Boss_FiveCombo();
 
 protected:
 	virtual void ActivateAbility(

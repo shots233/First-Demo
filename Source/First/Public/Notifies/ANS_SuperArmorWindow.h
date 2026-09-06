@@ -9,7 +9,7 @@
 
 /**
  * 霸体窗口（Super Armor Window）。
- * 放在 BOSS 霸体招式（如四连斩）的挥砍段：窗口内挂 Boss.Status.Uninterruptible，
+ * 放在 BOSS 霸体招式（如五连斩）的挥砍段：窗口内挂 Boss.Status.Uninterruptible，
  * 普通受击（GA_Boss_HitReact 被阻挡）与弹反（GA_Boss_ParryStagger 走霸体分支：
  * 照常削韧但不僵直、不打断）都无法中断招式；破韧与死亡不受霸体影响。
  * 后摇惩罚窗口（ANS_HitReactWindow）应与本窗口错开摆放，不要重叠。
