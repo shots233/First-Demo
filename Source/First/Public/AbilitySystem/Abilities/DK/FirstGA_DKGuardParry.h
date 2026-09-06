@@ -52,6 +52,10 @@ private:
 	UFUNCTION()
 	void HandleParrySuccess(FGameplayEventData Payload);
 
+	// 连锁弹反：连锁窗口（ANS_ParryChainWindow）内按下弹反键时由角色层发来。
+	UFUNCTION()
+	void HandleParryChainPressed(FGameplayEventData Payload);
+
 	UFUNCTION()
 	void HandleMontageCompleted();
 
@@ -64,6 +68,9 @@ private:
 	void JumpToGuardSection(FName SectionName);
 	void BeginGuardExit();
 	void FinishGuard(bool bWasCancelled);
+
+	// 连锁弹反时重开一轮 0.15s 弹反窗口（重挂标签 + 重启窗口计时器）。
+	void ReopenParryWindow();
 
 	bool bOwnsBlockingTag = false;
 	bool bOwnsParryWindowTag = false;

@@ -58,6 +58,7 @@ namespace MyGameplayTags
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Event_GuardHit);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Event_GuardBroken);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Event_ParrySuccess);
+	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Event_ParryChainRequest);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Event_ExecutionAbortedByBoss);
 
 	// Defending = 格挡 Ability 整体生命周期；
@@ -65,6 +66,9 @@ namespace MyGameplayTags
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Status_Defending);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Status_Blocking);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Status_ParryWindow);
+	// 弹反连锁窗口：GuardParry 蒙太奇 Parry 段后半由 ANS_ParryChainWindow 挂载；
+	// 窗口内按下弹反键会把按键转成 DK_Event_ParryChainRequest，原地重开一轮弹反。
+	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Status_ParryChainWindow);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Status_GuardBroken);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Status_Executing);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Status_StaminaRegenPaused);

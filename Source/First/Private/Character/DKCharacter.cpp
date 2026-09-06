@@ -5,6 +5,8 @@
 
 #include "EnhancedInputSubsystems.h"
 #include "MyGameplayTags.h"
+#include "Abilities/GameplayAbilityTypes.h"
+#include "AbilitySystemBlueprintLibrary.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/Input/DKInputComponent.h"
@@ -308,6 +310,24 @@ void ADKCharacter::Input_AbilityInputPressed(FGameplayTag InputTag)
 	if (IsHitReactOrDead())
 	{
 		return;
+	}
+
+	// 连锁弹反：弹反反击演出期间 GuardParry 仍存活（重新激活被 Defending 标签挡住），
+	// 连锁窗口（ANS_ParryChainWindow）内把这次按下边沿转成连锁事件，
+	// 由 GA 自己完成"跳回 Start 段 + 重开 0.15s 弹反窗口"。
+	// 注意不要 return：继续往下转发 ASC，维持 Spec 的 InputPressed 状态一致
+	//（GA 重臂松开监听时按它判断按键是否仍按住）。
+	if (InputTag == MyGameplayTags::InputTag_GuardParry &&
+		FirstAbilitySystemComponent &&
+		FirstAbilitySystemComponent->HasMatchingGameplayTag(MyGameplayTags::DK_Status_ParryChainWindow))
+	{
+		FGameplayEventData ChainEvent;
+		ChainEvent.Instigator = this;
+		ChainEvent.Target = this;
+		UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(
+			this,
+			MyGameplayTags::DK_Event_ParryChainRequest,
+			ChainEvent);
 	}
 
 	// 闪避改为“按下立即触发 + 长按衔接奔跑”，不再由 Shift 手势生成。

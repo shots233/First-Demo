@@ -183,6 +183,17 @@ void UFirstGA_DKGuardParry::ActivateAbility(
 	ParrySuccessTask->EventReceived.AddDynamic(this,&ThisClass::HandleParrySuccess);
 	ParrySuccessTask->ReadyForActivation();
 
+	// 连锁弹反请求：角色层只在 ParryChainWindow 标签存在时把弹反按键转成本事件。
+	UAbilityTask_WaitGameplayEvent* ParryChainTask =
+		UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(
+			this,
+			MyGameplayTags::DK_Event_ParryChainRequest,
+			nullptr,
+			false,
+			true);
+	ParryChainTask->EventReceived.AddDynamic(this,&ThisClass::HandleParryChainPressed);
+	ParryChainTask->ReadyForActivation();
+
 	ActiveGuardMontage = DK->GetGuardParryMontage();
 	if (!ActiveGuardMontage)
 	{
@@ -231,6 +242,63 @@ void UFirstGA_DKGuardParry::HandleParrySuccess(FGameplayEventData Payload)
 		bParryRiposteActive = true;
 		JumpToGuardSection(TEXT("Parry"));
 	}
+}
+
+void UFirstGA_DKGuardParry::HandleParryChainPressed(FGameplayEventData Payload)
+{
+	// "按了才连"：本事件只由按键边沿产生；退出流程中不连锁。
+	if (bExitRequested || !IsActive())
+	{
+		return;
+	}
+
+	// 跳回 Start 段重接格挡表现并复位反击状态：
+	// 此后格挡命中/弹反成功/松键各路径都走原有逻辑。
+	// 播放头离开 Parry 段会触发 ANS_ParryChainWindow::NotifyEnd 摘掉窗口标签，
+	// 一次窗口通过只连锁一次。
+	bParryRiposteActive = false;
+	JumpToGuardSection(TEXT("Start"));
+
+	ReopenParryWindow();
+
+	// 重臂松开监听：原来的 WaitInputRelease 已消费过，不重臂会导致
+	// 连锁后的这轮格挡无法通过松键退出。
+	if (UFirstAbilitySystemComponent* ASC = GetFirstAbilitySystemComponentFromActorInfo())
+	{
+		if (const FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromHandle(CurrentSpecHandle))
+		{
+			// 连锁触发点就是按下边沿，此刻按键通常仍按住：等真实松开边沿。
+			// 极短点按已松开的极少数情况传 true，让任务立即补发松开回调，
+			// 本轮连锁按"点按"语义正常进入退出流程。
+			const bool bAlreadyReleased = !Spec->InputPressed;
+
+			UAbilityTask_WaitInputRelease* ReleaseTask =
+				UAbilityTask_WaitInputRelease::WaitInputRelease(this, bAlreadyReleased);
+			ReleaseTask->OnRelease.AddDynamic(this,&ThisClass::HandleInputReleased);
+			ReleaseTask->ReadyForActivation();
+		}
+	}
+}
+
+void UFirstGA_DKGuardParry::ReopenParryWindow()
+{
+	UFirstAbilitySystemComponent* ASC = GetFirstAbilitySystemComponentFromActorInfo();
+	ADKCharacter* DK = GetDKCharacterFromActorInfo();
+	UDKDefenseComponent* Defense = DK ? DK->GetDKDefenseComponent() : nullptr;
+	if (!ASC || !Defense)
+	{
+		return;
+	}
+
+	// 重新挂弹反资格并重启窗口计时；时长沿用格挡组件的 ParryWindowDuration，
+	// 与首次弹反窗口完全同源。RemoveParryWindowTag 按所有权标志清理，可安全复用。
+	ASC->AddLooseGameplayTag(MyGameplayTags::DK_Status_ParryWindow);
+	bOwnsParryWindowTag = true;
+
+	UAbilityTask_WaitDelay* ParryWindowTask =
+		UAbilityTask_WaitDelay::WaitDelay(this, Defense->GetParryWindowDuration());
+	ParryWindowTask->OnFinish.AddDynamic(this,&ThisClass::HandleParryWindowElapsed);
+	ParryWindowTask->ReadyForActivation();
 }
 
 void UFirstGA_DKGuardParry::HandleMontageCompleted()

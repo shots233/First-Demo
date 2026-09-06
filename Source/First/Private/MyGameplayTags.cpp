@@ -46,11 +46,13 @@ namespace MyGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(DK_Event_GuardHit, "DK.Event.GuardHit");
 	UE_DEFINE_GAMEPLAY_TAG(DK_Event_GuardBroken, "DK.Event.GuardBroken");
 	UE_DEFINE_GAMEPLAY_TAG(DK_Event_ParrySuccess, "DK.Event.ParrySuccess");
+	UE_DEFINE_GAMEPLAY_TAG(DK_Event_ParryChainRequest, "DK.Event.ParryChainRequest");
 	UE_DEFINE_GAMEPLAY_TAG(DK_Event_ExecutionAbortedByBoss, "DK.Event.ExecutionAbortedByBoss");
 
 	UE_DEFINE_GAMEPLAY_TAG(DK_Status_Defending, "DK.Status.Defending");
 	UE_DEFINE_GAMEPLAY_TAG(DK_Status_Blocking, "DK.Status.Blocking");
 	UE_DEFINE_GAMEPLAY_TAG(DK_Status_ParryWindow, "DK.Status.ParryWindow");
+	UE_DEFINE_GAMEPLAY_TAG(DK_Status_ParryChainWindow, "DK.Status.ParryChainWindow");
 	UE_DEFINE_GAMEPLAY_TAG(DK_Status_GuardBroken, "DK.Status.GuardBroken");
 	UE_DEFINE_GAMEPLAY_TAG(DK_Status_Executing, "DK.Status.Executing");
 	UE_DEFINE_GAMEPLAY_TAG(DK_Status_StaminaRegenPaused, "DK.Status.StaminaRegenPaused");
