@@ -7,6 +7,8 @@
 #include "Types/FirstCombatTypes.h"
 #include "GA_Boss_NormalAttack.generated.h"
 
+class UAbilityTask_PlayMontageAndWait;
+
 /**
  * BOSS 普通攻击（单段）。
  */
@@ -34,16 +36,18 @@ protected:
 	UFUNCTION()
 	void HandleMeleeHit(FGameplayEventData Payload);
 
-	UFUNCTION()
-	void HandleMontageCompleted();
-
-	UFUNCTION()
-	void HandleMontageInterrupted();
-
 	FGameplayTagContainer CooldownTags;
 	virtual const FGameplayTagContainer* GetCooldownTags() const override;
 
 private:
+	UFUNCTION()
+	void HandleMontageCompleted();
+	UFUNCTION()
+	void HandleMontageInterrupted();
+	UPROPERTY()
+	TObjectPtr<UAbilityTask_PlayMontageAndWait> AttackMontageTask;
+	bool bEndingAttack = false;
+
 	UPROPERTY(EditDefaultsOnly, Category="Combat|Motion Warping")
 	FFirstAttackWarpingData AttackWarpingData;
 };

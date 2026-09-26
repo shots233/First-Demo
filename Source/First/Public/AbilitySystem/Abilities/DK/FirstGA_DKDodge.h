@@ -18,6 +18,10 @@ public:
 	UFirstGA_DKDodge();
 
 protected:
+	// 精力只要大于 0 就可支付最后一次闪避；耗尽后的恢复锁同时约束激活和提交。
+	virtual bool CheckCost(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
+		FGameplayTagContainer* OptionalRelevantTags = nullptr) const override;
+
 	// 普通状态可闪避；攻击或格挡状态必须拥有 .By.Dodge 权限。
 	virtual bool CanActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
 		const FGameplayTagContainer* SourceTags = nullptr, const FGameplayTagContainer* TargetTags = nullptr,

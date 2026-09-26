@@ -3,9 +3,88 @@
 
 #include "AbilitySystem/FirstAbilitySystemComponent.h"
 
+#include "AbilitySystem/FirstAttributeSet.h"
+#include "MyGameplayTags.h"
 #include "Types/FirstStructTypes.h"
 #include "Abilities/GameplayAbility.h"
 
+
+void UFirstAbilitySystemComponent::StartDodgeStaminaRecovery()
+{
+	if (bEndingPlay || bOwnsDodgeExhaustedTag)
+	{
+		return;
+	}
+
+	const UFirstAttributeSet* Attributes = GetSet<UFirstAttributeSet>();
+	if (!Attributes || Attributes->GetStamina() > 0.f)
+	{
+		return;
+	}
+
+	// 先记录所有权并监听，再加 Tag：Tag 回调引起的属性变化也能解除恢复锁。
+	bOwnsDodgeExhaustedTag = true;
+	DodgeRecoveryStaminaChangedHandle = GetGameplayAttributeValueChangeDelegate(
+		UFirstAttributeSet::GetStaminaAttribute()).AddUObject(
+			this, &ThisClass::HandleDodgeRecoveryAttributeChanged);
+	DodgeRecoveryMaxStaminaChangedHandle = GetGameplayAttributeValueChangeDelegate(
+		UFirstAttributeSet::GetMaxStaminaAttribute()).AddUObject(
+			this, &ThisClass::HandleDodgeRecoveryAttributeChanged);
+	AddLooseGameplayTag(MyGameplayTags::DK_Status_DodgeExhausted);
+	TryFinishDodgeStaminaRecovery();
+}
+
+void UFirstAbilitySystemComponent::HandleDodgeRecoveryAttributeChanged(const FOnAttributeChangeData& Data)
+{
+	TryFinishDodgeStaminaRecovery();
+}
+
+void UFirstAbilitySystemComponent::TryFinishDodgeStaminaRecovery()
+{
+	if (!bOwnsDodgeExhaustedTag || bEndingPlay)
+	{
+		return;
+	}
+
+	const UFirstAttributeSet* Attributes = GetSet<UFirstAttributeSet>();
+	if (Attributes && Attributes->GetMaxStamina() > 0.f &&
+		Attributes->GetStamina() >= Attributes->GetMaxStamina())
+	{
+		ClearDodgeStaminaRecovery();
+	}
+}
+
+void UFirstAbilitySystemComponent::ClearDodgeStaminaRecovery()
+{
+	const bool bRemoveOwnedTag = bOwnsDodgeExhaustedTag;
+	bOwnsDodgeExhaustedTag = false;
+
+	if (DodgeRecoveryStaminaChangedHandle.IsValid())
+	{
+		GetGameplayAttributeValueChangeDelegate(UFirstAttributeSet::GetStaminaAttribute())
+			.Remove(DodgeRecoveryStaminaChangedHandle);
+		DodgeRecoveryStaminaChangedHandle.Reset();
+	}
+	if (DodgeRecoveryMaxStaminaChangedHandle.IsValid())
+	{
+		GetGameplayAttributeValueChangeDelegate(UFirstAttributeSet::GetMaxStaminaAttribute())
+			.Remove(DodgeRecoveryMaxStaminaChangedHandle);
+		DodgeRecoveryMaxStaminaChangedHandle.Reset();
+	}
+
+	// 状态先清干净再移除自有的一层 Tag，避免 Tag 回调重入覆盖新状态。
+	if (bRemoveOwnedTag)
+	{
+		RemoveLooseGameplayTag(MyGameplayTags::DK_Status_DodgeExhausted);
+	}
+}
+
+void UFirstAbilitySystemComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	bEndingPlay = true;
+	ClearDodgeStaminaRecovery();
+	Super::EndPlay(EndPlayReason);
+}
 
 void UFirstAbilitySystemComponent::OnAbilityInputPressed(const FGameplayTag& InInputTag)
 {

@@ -9,7 +9,6 @@
 #include "CollisionQueryParams.h"
 #include "Engine/EngineTypes.h"
 #include "Engine/World.h"
-#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "MyGameplayTags.h"
@@ -221,7 +220,8 @@ bool UDKTargetLockComponent::HasLineOfSightTo(
 	return HitActor == Candidate ||(HitActor && HitActor->IsOwnedBy(Candidate));
 }
 
-bool UDKTargetLockComponent::ProjectTargetToScreen(AEnemyCharacter* Candidate,FVector2D& OutScreenPosition) const
+bool UDKTargetLockComponent::ProjectTargetToScreen(AEnemyCharacter* Candidate,
+	FVector2D& OutScreenPosition, bool bRequireOnScreen) const
 {
 	if (!OwnerCharacter || !Candidate)
 	{
@@ -243,7 +243,9 @@ bool UDKTargetLockComponent::ProjectTargetToScreen(AEnemyCharacter* Candidate,FV
 	int32 ViewportY = 0;
 	PlayerController->GetViewportSize(ViewportX,ViewportY);
 
-	return bProjected &&ViewportX > 0 &&ViewportY > 0 &&OutScreenPosition.X >= 0.f &&OutScreenPosition.X <= ViewportX &&OutScreenPosition.Y >= 0.f &&OutScreenPosition.Y <= ViewportY;
+	return bProjected && ViewportX > 0 && ViewportY > 0 &&
+		(!bRequireOnScreen || (OutScreenPosition.X >= 0.f && OutScreenPosition.X <= ViewportX &&
+			OutScreenPosition.Y >= 0.f && OutScreenPosition.Y <= ViewportY));
 }
 
 float UDKTargetLockComponent::CalculateAcquireScore(AEnemyCharacter* Candidate) const
@@ -304,14 +306,19 @@ UDKTargetLockComponent::FindBestTarget() const
 
 void UDKTargetLockComponent::SetCurrentTarget(AEnemyCharacter* NewTarget)
 {
-	if (!OwnerCharacter || !IsValid(NewTarget))
+	if (!OwnerCharacter || !IsValid(NewTarget) || CurrentTarget.Get() == NewTarget)
 	{
 		return;
 	}
 
 	const bool bWasAlreadyLocked = bLockModeActive;
 
+	if (AEnemyCharacter* OldTarget = CurrentTarget.Get())
+	{
+		OldTarget->OnEndPlay.RemoveDynamic(this, &ThisClass::HandleTargetEndPlay);
+	}
 	CurrentTarget = NewTarget;
+	NewTarget->OnEndPlay.AddUniqueDynamic(this, &ThisClass::HandleTargetEndPlay);
 	OccludedElapsedTime = 0.f;
 
 	if (!bWasAlreadyLocked)
@@ -346,21 +353,30 @@ void UDKTargetLockComponent::SwitchTarget(float Direction)
 	{
 		return;
 	}
-	NextAllowedSwitchTime =CurrentTime + SwitchCooldown;
-
 	AEnemyCharacter* OldTarget =CurrentTarget.Get();
 
-	FVector2D OldTargetScreenPosition;
-	if (!ProjectTargetToScreen(OldTarget,OldTargetScreenPosition))
+	APlayerController* PlayerController = OwnerCharacter ? Cast<APlayerController>(OwnerCharacter->GetController()) : nullptr;
+	if (!PlayerController)
 	{
 		return;
 	}
 
-	APlayerController* PlayerController =Cast<APlayerController>(OwnerCharacter->GetController());
-
 	int32 ViewportX = 0;
 	int32 ViewportY = 0;
 	PlayerController->GetViewportSize(ViewportX,ViewportY);
+	if (ViewportX <= 0 || ViewportY <= 0)
+	{
+		return;
+	}
+
+	// 旧目标可以暂时在屏幕外；只有新候选必须可见。
+	// 旧目标已移到镜头后、无法投影时，以屏幕中心作为左右切换参照。
+	FVector2D OldTargetScreenPosition(ViewportX * 0.5f, ViewportY * 0.5f);
+	FVector2D ProjectedOldTarget;
+	if (ProjectTargetToScreen(OldTarget, ProjectedOldTarget, false))
+	{
+		OldTargetScreenPosition = ProjectedOldTarget;
+	}
 
 	const TArray<AEnemyCharacter*> Candidates =GatherCandidates(false);
 
@@ -421,7 +437,15 @@ void UDKTargetLockComponent::SwitchTarget(float Direction)
 		*GetNameSafe(OldTarget),
 		*GetNameSafe(BestTarget));
 
+	// 失败的切换请求不消耗冷却，允许玩家立即向另一侧重试。
+	NextAllowedSwitchTime = CurrentTime + SwitchCooldown;
 	SetCurrentTarget(BestTarget);
+}
+
+void UDKTargetLockComponent::HandleTargetEndPlay(AActor* Actor, EEndPlayReason::Type EndPlayReason)
+{
+	// 销毁或移出关卡时立即清理，避免下一次 Tick 前仍留下锁定标签和朝向覆盖。
+	ClearTargetLockInternal(TEXT("TargetEndPlay"));
 }
 
 void UDKTargetLockComponent::UpdateLockedTarget(float DeltaTime)
@@ -523,43 +547,18 @@ void UDKTargetLockComponent::UpdateControlRotation(
 
 void UDKTargetLockComponent::ApplyLockedMovementMode()
 {
-	if (!OwnerCharacter)
+	if (OwnerCharacter)
 	{
-		return;
+		OwnerCharacter->SetControllerFacingOverride(this, true);
 	}
-
-	UCharacterMovementComponent* Movement =OwnerCharacter->GetCharacterMovement();
-	if (!Movement)
-	{
-		return;
-	}
-
-	if (!bMovementSettingsCached)
-	{
-		bCachedOrientRotationToMovement =Movement->bOrientRotationToMovement;
-		bCachedUseControllerDesiredRotation =Movement->bUseControllerDesiredRotation;
-		bMovementSettingsCached = true;
-	}
-
-	// 角色不再朝移动方向转，而是平滑朝 Controller 的目标 Yaw。
-	Movement->bOrientRotationToMovement = false;
-	Movement->bUseControllerDesiredRotation = true;
 }
 
 void UDKTargetLockComponent::RestoreMovementMode()
 {
-	if (!OwnerCharacter ||!bMovementSettingsCached)
+	if (OwnerCharacter)
 	{
-		return;
+		OwnerCharacter->SetControllerFacingOverride(this, false);
 	}
-
-	if (UCharacterMovementComponent* Movement =OwnerCharacter->GetCharacterMovement())
-	{
-		Movement->bOrientRotationToMovement =bCachedOrientRotationToMovement;
-		Movement->bUseControllerDesiredRotation =bCachedUseControllerDesiredRotation;
-	}
-
-	bMovementSettingsCached = false;
 }
 
 void UDKTargetLockComponent::ShowTargetIndicator()
@@ -652,6 +651,10 @@ void UDKTargetLockComponent::ClearTargetLockInternal(
 
 	const FString OldTargetName =GetNameSafe(CurrentTarget.Get());
 
+	if (AEnemyCharacter* OldTarget = CurrentTarget.Get())
+	{
+		OldTarget->OnEndPlay.RemoveDynamic(this, &ThisClass::HandleTargetEndPlay);
+	}
 	CurrentTarget.Reset();
 	OccludedElapsedTime = 0.f;
 	NextAllowedSwitchTime = 0.f;

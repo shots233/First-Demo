@@ -7,6 +7,9 @@
 #include "FirstGA_DKLightAttack.generated.h"
 
 class UAbilityTask_WaitInputPress;
+class UAbilityTask_PlayMontageAndWait;
+class AEnemyCharacter;
+class UDKTargetLockComponent;
 
 UCLASS()
 class FIRST_API UFirstGA_DKLightAttack : public UFirstDKGameplayAbility
@@ -34,6 +37,11 @@ protected:
 		bool bWasCancelled) override;
 
 private:
+	UFUNCTION()
+	void HandleTargetLockChanged(AEnemyCharacter* NewTarget);
+
+	TWeakObjectPtr<UDKTargetLockComponent> ObservedTargetLock;
+
 	// 作用：在 Montage 前创建持续监听的命中、连击窗口开、连击窗口关三个 GameplayEvent 任务。
 	void StartEventListeners();
 
@@ -53,15 +61,15 @@ private:
     // CurrentComboStep 使用 1 起始编号；下一个蒙太奇的数组索引正好等于 CurrentComboStep。
 	bool CanTransitionToNextComboStep();
 
-	// 在 ComboWindow 结束时，请求平滑停止当前攻击蒙太奇。
-	// 真正进入下一段的时机由 HandleMontageCancelled 处理。
-	void RequestNextComboStepTransition();
+	// 消耗本段缓存，解除旧动画回调后主动切段，不依赖 Interrupted。
+	void RequestNextComboStepTransition(bool bMontageCompleted = false);
+	void ClearCurrentMontageTask();
 
 	// 作用：收到武器命中目标事件后，创建原生 Damage GE Spec 并应用给 Payload.Target。
 	UFUNCTION()
 	void HandleMeleeHit(FGameplayEventData Payload);
 
-	// 作用：连击窗口打开时开始等待下一次攻击输入。
+	// 只接收本段动画的窗口；输入监听从本段开始就已经存在。
 	UFUNCTION()
 	void HandleComboWindowOpened(FGameplayEventData Payload);
 	
@@ -71,11 +79,11 @@ private:
 	UFUNCTION()
 	void HandleActionCancelWindowClosed(FGameplayEventData Payload);
 
-	// 作用：连击窗口关闭时停止等待，窗口外输入不会进入本次缓存。
+	// 关窗时执行已缓存的下一刀，并记录短暂容错的起点。
 	UFUNCTION()
 	void HandleComboWindowClosed(FGameplayEventData Payload);
 
-	// 作用：窗口内收到再次按键时，把“想接下一段”记录为 true。
+	// 每段只缓存一次新按下；关窗后仅接受短暂容错内的输入。
 	UFUNCTION()
 	void HandleComboInputPressed(float TimeWaited);
 
@@ -95,18 +103,24 @@ private:
 	bool bComboWindowOpen = false;
 	bool bWantsNextCombo = false;
 	
-	// 本段的 ComboWindow 是否已经关闭。
-	// false：窗口还没结束，收到的攻击输入会被缓存；
-	// true：窗口已经结束，之后的攻击输入直接丢弃。
+	// 本段最后一个有效窗口是否已经关闭。
 	bool bComboWindowPassed = false;
+	double ComboWindowClosedAt = -1.0;
+	TSet<TWeakObjectPtr<const UObject>> ActiveComboWindowSources;
+
+	// 容忍刚过窗口边界的点按；0 可恢复严格的截止规则。
+	UPROPERTY(EditDefaultsOnly, Category="Combat|Combo", meta=(ClampMin="0.0", UIMax="0.3", Units="s"))
+	float ComboInputGracePeriod = 0.1f;
 	
 	// 当前正在播放的攻击蒙太奇。
 	UPROPERTY()
 	TObjectPtr<UAnimMontage> CurrentAttackMontage;
 	
-	// true 表示这一次“中断蒙太奇”是连招流程主动触发的，
-	// 不是闪避、死亡、受击等异常打断。
+	// 切段过程中拒绝旧通知或回调重入。
 	bool bTransitionToNextComboStep = false;
+
+	UPROPERTY()
+	TObjectPtr<UAbilityTask_PlayMontageAndWait> CurrentMontageTask;
 
 	UPROPERTY()
 	TObjectPtr<UAbilityTask_WaitInputPress> ComboInputTask;

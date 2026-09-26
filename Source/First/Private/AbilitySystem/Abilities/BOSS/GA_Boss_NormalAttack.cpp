@@ -4,8 +4,10 @@
 #include "AbilitySystem/Abilities/Boss/GA_Boss_NormalAttack.h"
 
 #include "Abilities/GameplayAbilityTypes.h"
-#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
+
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
+#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
+#include "AbilitySystemComponent.h"
 #include "AbilitySystem/GameplayEffects/FirstGE_Damage.h"
 #include "AIController.h"
 #include "BehaviorTree/BlackboardComponent.h"
@@ -48,6 +50,7 @@ void UGA_Boss_NormalAttack::ActivateAbility(const FGameplayAbilitySpecHandle Han
 	const FGameplayEventData* TriggerEventData)
 {
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
+	bEndingAttack = false;
 
 	ABossCharacter* Boss = GetBossCharacterFromActorInfo();
 	UAnimMontage* Montage = Boss ? Boss->GetNormalAttackMontage() : nullptr;
@@ -86,15 +89,13 @@ void UGA_Boss_NormalAttack::ActivateAbility(const FGameplayAbilitySpecHandle Han
 	HitTask->EventReceived.AddDynamic(this, &ThisClass::HandleMeleeHit);
 	HitTask->ReadyForActivation();
 
-	UAbilityTask_PlayMontageAndWait* MontageTask =
-		UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
-			this,
-			TEXT("NormalAttackMontage"),
-			Montage);
-	MontageTask->OnCompleted.AddDynamic(this, &ThisClass::HandleMontageCompleted);
-	MontageTask->OnInterrupted.AddDynamic(this, &ThisClass::HandleMontageInterrupted);
-	MontageTask->OnCancelled.AddDynamic(this, &ThisClass::HandleMontageInterrupted);
-	MontageTask->ReadyForActivation();
+	// 原招独立播放和结束；追击改由行为树的远追服务启动。
+	AttackMontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
+		this, TEXT("BossAttack"), Montage, 1.f, NAME_None, true, 1.f, 0.f, true);
+	AttackMontageTask->OnCompleted.AddDynamic(this, &ThisClass::HandleMontageCompleted);
+	AttackMontageTask->OnInterrupted.AddDynamic(this, &ThisClass::HandleMontageInterrupted);
+	AttackMontageTask->OnCancelled.AddDynamic(this, &ThisClass::HandleMontageInterrupted);
+	AttackMontageTask->ReadyForActivation();
 
 }
 
@@ -102,6 +103,29 @@ void UGA_Boss_NormalAttack::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
 	bool bReplicateEndAbility, bool bWasCancelled)
 {
+	if (bEndingAttack || !IsEndAbilityValid(Handle, ActorInfo)) return;
+	if (ScopeLockCount > 0)
+	{
+		Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
+		return;
+	}
+	bEndingAttack = true;
+	if (AttackMontageTask)
+	{
+		AttackMontageTask->OnCompleted.RemoveAll(this);
+		AttackMontageTask->OnInterrupted.RemoveAll(this);
+		AttackMontageTask->OnCancelled.RemoveAll(this);
+		AttackMontageTask->EndTask();
+		AttackMontageTask = nullptr;
+	}
+	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
+	{
+		if (ASC->GetAnimatingAbility() == this)
+		{
+			ASC->CurrentMontageStop(0.08f);
+			ASC->ClearAnimatingAbility(this);
+		}
+	}
 	// 正常结束、被弹反、受击或死亡取消时都会清理 AttackTarget。
 	if (ABossCharacter* Boss = GetBossCharacterFromActorInfo())
 	{
@@ -118,6 +142,7 @@ void UGA_Boss_NormalAttack::EndAbility(const FGameplayAbilitySpecHandle Handle,
 
 void UGA_Boss_NormalAttack::HandleMeleeHit(FGameplayEventData Payload)
 {
+	if (!IsActive() || bEndingAttack) return;
 	AActor* TargetActor = const_cast<AActor*>(Payload.Target.Get());
 	ABossCharacter* Boss = GetBossCharacterFromActorInfo();
 	if (!TargetActor || !Boss)
@@ -127,7 +152,7 @@ void UGA_Boss_NormalAttack::HandleMeleeHit(FGameplayEventData Payload)
 
 	const EFirstDefenseResult DefenseResult = ResolveTargetDefense(TargetActor,Boss->GetNormalAttackDefenseData());
 
-	if (DefenseResult != EFirstDefenseResult::Damaged)
+	if (!IsActive() || DefenseResult != EFirstDefenseResult::Damaged)
 	{
 		return;
 	}
@@ -140,17 +165,17 @@ void UGA_Boss_NormalAttack::HandleMeleeHit(FGameplayEventData Payload)
 	ApplyEffectSpecHandleToTarget(TargetActor, SpecHandle);
 }
 
+const FGameplayTagContainer* UGA_Boss_NormalAttack::GetCooldownTags() const
+{
+	return &CooldownTags;
+}
+
 void UGA_Boss_NormalAttack::HandleMontageCompleted()
 {
-	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+	if (IsActive()) EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 }
 
 void UGA_Boss_NormalAttack::HandleMontageInterrupted()
 {
-	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
-}
-
-const FGameplayTagContainer* UGA_Boss_NormalAttack::GetCooldownTags() const
-{
-	return &CooldownTags;
+	if (IsActive()) EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 }

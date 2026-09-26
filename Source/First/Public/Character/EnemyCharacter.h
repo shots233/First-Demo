@@ -21,7 +21,13 @@ public:
 	UFUNCTION(BlueprintPure, Category="Target Lock")
 	FVector GetTargetLockLocation() const;
 
+protected:
+	virtual void PostInitializeComponents() override;
+
 private:
+	// 只忽略相机探测，保留角色、场景及攻击检测所需的碰撞响应。
+	void ConfigureCameraCollision();
+
 	// 可在 BP_Boss 的组件视口中移动到胸口、头部或弱点位置。
 	UPROPERTY(VisibleAnywhere,BlueprintReadOnly,Category="Target Lock",meta=(AllowPrivateAccess="true"))
 	TObjectPtr<USceneComponent> TargetLockPoint;

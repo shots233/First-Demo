@@ -4,8 +4,10 @@
 #include "AbilitySystem/Abilities/Boss/GA_Boss_ThreeCombo.h"
 
 #include "Abilities/GameplayAbilityTypes.h"
-#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
+
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
+#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
+#include "AbilitySystemComponent.h"
 #include "AbilitySystem/GameplayEffects/FirstGE_Damage.h"
 #include "AIController.h"
 #include "BehaviorTree/BlackboardComponent.h"
@@ -47,6 +49,7 @@ void UGA_Boss_ThreeCombo::ActivateAbility(const FGameplayAbilitySpecHandle Handl
 	const FGameplayEventData* TriggerEventData)
 {
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
+	bEndingAttack = false;
 
 	ABossCharacter* Boss = GetBossCharacterFromActorInfo();
 	UAnimMontage* Montage = Boss ? Boss->GetThreeComboMontage() : nullptr;
@@ -85,21 +88,42 @@ void UGA_Boss_ThreeCombo::ActivateAbility(const FGameplayAbilitySpecHandle Handl
 	HitTask->EventReceived.AddDynamic(this, &ThisClass::HandleMeleeHit);
 	HitTask->ReadyForActivation();
 
-	UAbilityTask_PlayMontageAndWait* MontageTask =
-		UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
-			this,
-			TEXT("ThreeComboMontage"),
-			Montage);
-	MontageTask->OnCompleted.AddDynamic(this, &ThisClass::HandleMontageCompleted);
-	MontageTask->OnInterrupted.AddDynamic(this, &ThisClass::HandleMontageInterrupted);
-	MontageTask->OnCancelled.AddDynamic(this, &ThisClass::HandleMontageInterrupted);
-	MontageTask->ReadyForActivation();
+	// 原招独立播放和结束；追击改由行为树的远追服务启动。
+	AttackMontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
+		this, TEXT("BossAttack"), Montage, 1.f, NAME_None, true, 1.f, 0.f, true);
+	AttackMontageTask->OnCompleted.AddDynamic(this, &ThisClass::HandleMontageCompleted);
+	AttackMontageTask->OnInterrupted.AddDynamic(this, &ThisClass::HandleMontageInterrupted);
+	AttackMontageTask->OnCancelled.AddDynamic(this, &ThisClass::HandleMontageInterrupted);
+	AttackMontageTask->ReadyForActivation();
 }
 
 void UGA_Boss_ThreeCombo::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
 	bool bReplicateEndAbility, bool bWasCancelled)
 {
+	if (bEndingAttack || !IsEndAbilityValid(Handle, ActorInfo)) return;
+	if (ScopeLockCount > 0)
+	{
+		Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
+		return;
+	}
+	bEndingAttack = true;
+	if (AttackMontageTask)
+	{
+		AttackMontageTask->OnCompleted.RemoveAll(this);
+		AttackMontageTask->OnInterrupted.RemoveAll(this);
+		AttackMontageTask->OnCancelled.RemoveAll(this);
+		AttackMontageTask->EndTask();
+		AttackMontageTask = nullptr;
+	}
+	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
+	{
+		if (ASC->GetAnimatingAbility() == this)
+		{
+			ASC->CurrentMontageStop(0.08f);
+			ASC->ClearAnimatingAbility(this);
+		}
+	}
 	// 三连所有 Warp 窗口共用同一会话，能力的任意结束路径在这里统一清理。
 	if (ABossCharacter* Boss = GetBossCharacterFromActorInfo())
 	{
@@ -116,6 +140,7 @@ void UGA_Boss_ThreeCombo::EndAbility(const FGameplayAbilitySpecHandle Handle,
 
 void UGA_Boss_ThreeCombo::HandleMeleeHit(FGameplayEventData Payload)
 {
+	if (!IsActive() || bEndingAttack) return;
 	AActor* TargetActor = const_cast<AActor*>(Payload.Target.Get());
 	ABossCharacter* Boss = GetBossCharacterFromActorInfo();
 	if (!TargetActor || !Boss)
@@ -125,7 +150,7 @@ void UGA_Boss_ThreeCombo::HandleMeleeHit(FGameplayEventData Payload)
 
 	const EFirstDefenseResult DefenseResult = ResolveTargetDefense(TargetActor,Boss->GetThreeComboDefenseData());
 
-	if (DefenseResult != EFirstDefenseResult::Damaged)
+	if (!IsActive() || DefenseResult != EFirstDefenseResult::Damaged)
 	{
 		return;
 	}
@@ -138,17 +163,17 @@ void UGA_Boss_ThreeCombo::HandleMeleeHit(FGameplayEventData Payload)
 	ApplyEffectSpecHandleToTarget(TargetActor, SpecHandle);
 }
 
+const FGameplayTagContainer* UGA_Boss_ThreeCombo::GetCooldownTags() const
+{
+	return &CooldownTags;
+}
+
 void UGA_Boss_ThreeCombo::HandleMontageCompleted()
 {
-	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+	if (IsActive()) EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 }
 
 void UGA_Boss_ThreeCombo::HandleMontageInterrupted()
 {
-	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
-}
-
-const FGameplayTagContainer* UGA_Boss_ThreeCombo::GetCooldownTags() const
-{
-	return &CooldownTags;
+	if (IsActive()) EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 }

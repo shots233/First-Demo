@@ -7,7 +7,7 @@ UFirstGE_StaminaRegenPause::UFirstGE_StaminaRegenPause()
 {
 	DurationPolicy = EGameplayEffectDurationType::HasDuration;
 	DurationMagnitude =
-		FGameplayEffectModifierMagnitude(FScalableFloat(0.75f));
+		FGameplayEffectModifierMagnitude(FScalableFloat(PauseDurationSeconds));
 
 	// 同一目标只保留一层；新一次格挡会刷新剩余 0.75 秒。
 	StackingType = EGameplayEffectStackingType::AggregateByTarget;
@@ -25,4 +25,12 @@ UFirstGE_StaminaRegenPause::UFirstGE_StaminaRegenPause()
 
 	GEComponents.Add(TargetTagsComponent);
 	TargetTagsComponent->SetAndApplyTargetTagChanges(GrantedTags);
+}
+
+void UFirstGE_StaminaRegenPause::PostInitProperties()
+{
+	Super::PostInitProperties();
+
+	// 以可调参数为准，重写序列化来的 Duration，保证在蓝图子类默认值面板修改后实际生效。
+	DurationMagnitude = FGameplayEffectModifierMagnitude(FScalableFloat(PauseDurationSeconds));
 }

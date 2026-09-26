@@ -15,10 +15,12 @@ class USpringArmComponent;
 class UCameraComponent;
 class UDataAsset_InputConfig;
 struct FInputActionValue;
+struct FOnAttributeChangeData;
 class UDKUIComponent;
 class UUserWidget;
 class UDKTargetLockComponent;
 class UDKDefenseComponent;
+class UDKTurnInPlaceComponent;
 /**
  * 
  */
@@ -28,14 +30,33 @@ class FIRST_API ADKCharacter : public ABaseCharacter
 	GENERATED_BODY()
 public:
 	ADKCharacter();
+
+	// 锁定和格挡分别申请面向 Controller；最后一个来源退出时才恢复原始朝向模式。
+	void SetControllerFacingOverride(UObject* Source, bool bEnabled);
+	// 动画根旋转/原地等待暂时接管朝向；优先于面向 Controller 的请求。
+	void SetAutomaticRotationSuppressed(UObject* Source, bool bSuppressed);
+	UDKTurnInPlaceComponent* GetTurnInPlaceComponent() const { return TurnInPlaceComponent; }
 	
 protected:
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	
 	// 创建并显示玩家 HUD 与 BOSS HUD。
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 private:
+	TSet<TWeakObjectPtr<UObject>> ControllerFacingSources;
+	TSet<TWeakObjectPtr<UObject>> RotationSuppressionSources;
+	bool bMovementRotationCached = false;
+	void RefreshMovementRotationOverrides();
+	bool bCachedOrientRotationToMovement = true;
+	bool bCachedUseControllerDesiredRotation = false;
+
+#if WITH_DEV_AUTOMATION_TESTS
+	friend class FFirstSprintStaminaTestAccess;
+	friend struct FFirstTurnInPlaceTestAccess;
+#endif
 	void Input_Move(const FInputActionValue& Value);
+	void Input_MoveCompleted(const FInputActionValue& Value);
 	void Input_Look(const FInputActionValue& Value);
 	void Input_JumpStarted(const FInputActionValue& Value);
 	void Input_JumpCompleted(const FInputActionValue& Value);
@@ -57,6 +78,24 @@ private:
 	
 	// 统一修改跑步状态与移动速度，避免多个输入函数直接写 MaxWalkSpeed。
 	void SetRunning(bool bNewRunning);
+	void RefreshRunningState();
+	bool CanRunWithCurrentStamina() const;
+	void HandleDodgeExhaustedChanged(const FGameplayTag Tag, int32 NewCount);
+	void HandleRunningStaminaChanged(const FOnAttributeChangeData& Data);
+	FDelegateHandle DodgeExhaustedChangedHandle;
+	FDelegateHandle RunningStaminaChangedHandle;
+	// 保存已经成立的长按请求；耗尽期间保留请求，回满且未松键时恢复奔跑。
+	bool bRunRequested = false;
+
+	// 移动完成后按实际奔跑时间扣费；不需要启用角色 Actor Tick。
+	UFUNCTION()
+	void HandleSprintMovementUpdated(float DeltaSeconds, FVector OldLocation, FVector OldVelocity);
+	void TryReleaseSprintRegenPause();
+	void ReleaseSprintRegenPause();
+	FTimerHandle SprintRegenPauseTimerHandle;
+	double SprintRegenResumeTime = 0.0;
+	// 只拥有一层恢复暂停 Tag，不清除格挡受击等其他来源。
+	bool bOwnsSprintRegenPause = false;
 	
 	// 计时器到点：如果闪避键仍未松开，进入奔跑。
 	void HandleDodgeHoldElapsed();
@@ -94,8 +133,18 @@ private:
 	// Shift 长按成立后使用的速度。
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly,Category="Character Data|Movement", meta=(AllowPrivateAccess="true"))
 	float RunSpeed = 500.f;
+
+	// 实际在地面奔跑时每秒消耗的精力；设为 0 可关闭奔跑消耗。
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Character Data|Movement|Stamina",
+		meta=(AllowPrivateAccess="true", ClampMin="0.0", UIMin="0.0"))
+	float SprintStaminaCostPerSecond = 5.f;
+
+	// 最后一次实际奔跑后，等待这些秒数才允许自动恢复；其他恢复限制仍然有效。
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Character Data|Movement|Stamina",
+		meta=(AllowPrivateAccess="true", ClampMin="0.01", UIMin="0.01", Units="s"))
+	float SprintStaminaRegenDelay = 0.5f;
 	
-	// 当前是否已经通过长按进入跑步状态。只作为角色本地移动状态，不需要进入 GAS。
+	// 长按请求成立且精力恢复锁已解除；动作本身的移动速度仍由对应 Ability 控制。
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly,Category="Character Data|Movement", meta=(AllowPrivateAccess="true"))
 	bool bIsRunning = false;
 	
@@ -176,6 +225,9 @@ private:
 	
 	UPROPERTY(VisibleAnywhere,BlueprintReadOnly,Category="Target Lock",meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UDKTargetLockComponent>TargetLockComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Movement", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UDKTurnInPlaceComponent> TurnInPlaceComponent;
 	
 public:
 	// 作用：提供 DK 专用战斗组件的快捷访问，使 C++ Ability 不需要反复 FindComponent。
@@ -259,9 +311,6 @@ public:
 	// 由死亡 Ability 调用：清理角色层的跳跃、长按奔跑与目标锁定。
 	void PrepareForDeath();
 
-	// 只根据当前 Shift 长按状态返回正常移动速度；Guard/Break/Execute 结束时使用。
-	FORCEINLINE float GetDesiredLocomotionSpeed() const
-	{
-		return bIsRunning ? RunSpeed : WalkSpeed;
-	}
+	// 根据当前长按请求和精力恢复锁返回速度，供动作结束时恢复移动使用。
+	float GetDesiredLocomotionSpeed() const;
 };

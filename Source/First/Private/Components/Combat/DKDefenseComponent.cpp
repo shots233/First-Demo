@@ -9,16 +9,31 @@
 #include "Camera/CameraShakeBase.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Components/CapsuleComponent.h"
+#include "Engine/World.h"
 #include "GameFramework/Character.h"
 #include "Kismet/GameplayStatics.h"
 #include "MyGameplayTags.h"
-#include "Particles/ParticleSystem.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
+#include "Performance/FirstCombatWarmupSubsystem.h"
 #include "Sound/SoundBase.h"
+#include "Types/FirstGuardHitEventData.h"
 
 UDKDefenseComponent::UDKDefenseComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
 	PrimaryComponentTick.bStartWithTickEnabled = false;
+}
+
+void UDKDefenseComponent::BeginPlay()
+{
+	Super::BeginPlay();
+	if (UFirstCombatWarmupSubsystem* Warmup = GetWorld()->GetSubsystem<UFirstCombatWarmupSubsystem>())
+	{
+		Warmup->PrepareSystem(GuardHitVFX);
+		Warmup->PrepareSystem(ParrySuccessVFX);
+		Warmup->PrepareSystem(GuardBrokenVFX);
+	}
 }
 
 bool UDKDefenseComponent::IsAttackerInsideGuardArc(const AActor* Attacker) const
@@ -172,6 +187,10 @@ EFirstDefenseResult UDKDefenseComponent::ResolveIncomingMeleeAttack(
 		}
 		else
 		{
+			UFirstGuardHitEventData* GuardHitData = NewObject<UFirstGuardHitEventData>(this);
+			GuardHitData->GuardPushbackDistance = AttackData.GuardPushbackDistance;
+			GuardHitData->GuardPushbackDuration = AttackData.GuardPushbackDuration;
+			BlockEvent.OptionalObject = GuardHitData;
 			UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(Defender,MyGameplayTags::DK_Event_GuardHit,BlockEvent);
 			PlayDefenseSFX(GuardHitSound);
 			PlayDefenseVFX(GuardHitVFX, Attacker);
@@ -185,11 +204,19 @@ EFirstDefenseResult UDKDefenseComponent::ResolveIncomingMeleeAttack(
 	return EFirstDefenseResult::Damaged;
 }
 
-void UDKDefenseComponent::PlayDefenseVFX(UParticleSystem* VFX, const AActor* Attacker) const
+void UDKDefenseComponent::PlayDefenseVFX(UNiagaraSystem* VFX, const AActor* Attacker) const
 {
 	AActor* Defender = GetOwner();
-	if (!Defender || !VFX || !Attacker)
+	if (!Defender || !Attacker)
 	{
+		return;
+	}
+
+	if (!VFX)
+	{
+		// 诊断日志：走到分支但槽位为空 = 运行时 BP 上的 Niagara 引用是 None。
+		UE_LOG(LogTemp, Warning, TEXT("[DefenseVFX] VFX 槽位为空，跳过生成 (Owner=%s)"),
+			*Defender->GetName());
 		return;
 	}
 
@@ -211,13 +238,19 @@ void UDKDefenseComponent::PlayDefenseVFX(UParticleSystem* VFX, const AActor* Att
 		? FRotator::ZeroRotator
 		: ToDefender.Rotation();
 
-	// 一次性级联粒子：播完自动销毁，无需管理生命周期。
-	// WorldContextObject 用属于世界的 Defender，与音效同款写法。
-	UGameplayStatics::SpawnEmitterAtLocation(
+	// 一次性 Niagara 特效：自动销毁。与蓝图"生成Niagara(在位置处)"默认行为完全一致，
+	// 排除池化参数干扰后再考虑恢复 AutoRelease。
+	UNiagaraComponent* Spawned = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
 		Defender,
 		VFX,
 		SpawnLocation,
 		SpawnRotation);
+
+	// 诊断日志：确认组件是否真的生成、以及生成在世界坐标哪里。
+	UE_LOG(LogTemp, Warning, TEXT("[DefenseVFX] %s -> %s @ %s"),
+		*VFX->GetName(),
+		Spawned ? TEXT("生成成功") : TEXT("生成失败(空组件)"),
+		*SpawnLocation.ToString());
 }
 
 void UDKDefenseComponent::PlayDefenseShake(TSubclassOf<UCameraShakeBase> ShakeClass, float Scale) const

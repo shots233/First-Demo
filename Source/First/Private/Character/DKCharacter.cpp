@@ -4,6 +4,7 @@
 #include "Character/DKCharacter.h"
 
 #include "EnhancedInputSubsystems.h"
+#include "EnhancedPlayerInput.h"
 #include "MyGameplayTags.h"
 #include "Abilities/GameplayAbilityTypes.h"
 #include "AbilitySystemBlueprintLibrary.h"
@@ -12,13 +13,19 @@
 #include "Components/Input/DKInputComponent.h"
 #include "Components/Combat/DKCombatComponent.h"
 #include "AbilitySystem/FirstAbilitySystemComponent.h"
+#include "AbilitySystem/FirstAttributeSet.h"
+#include "AbilitySystem/GameplayEffects/FirstGE_StaminaChange.h"
 #include "Blueprint/UserWidget.h"
 #include "Components/Combat/DKDefenseComponent.h"
 #include "Components/Targeting/DKTargetLockComponent.h"
+#include "Components/Locomotion/DKTurnInPlaceComponent.h"
 #include "Components/UI/DKUIComponent.h"
 #include "DataAssets/Input/DataAsset_InputConfig.h"
+#include "Engine/World.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/PlayerController.h"
+#include "InputAction.h"
 
 ADKCharacter::ADKCharacter()
 {
@@ -58,7 +65,48 @@ ADKCharacter::ADKCharacter()
 	DKDefenseComponent =CreateDefaultSubobject<UDKDefenseComponent>(TEXT("DKDefenseComponent"));
 	DKUIComponent = CreateDefaultSubobject<UDKUIComponent>(TEXT("DKUIComponent"));
 	TargetLockComponent =CreateDefaultSubobject<UDKTargetLockComponent>(TEXT("TargetLockComponent"));
+	TurnInPlaceComponent = CreateDefaultSubobject<UDKTurnInPlaceComponent>(TEXT("TurnInPlaceComponent"));
 	JumpMaxCount = 1;
+}
+
+void ADKCharacter::SetControllerFacingOverride(UObject* Source, bool bEnabled)
+{
+	if (!Source) { return; }
+	if (bEnabled) { ControllerFacingSources.Add(Source); }
+	else { ControllerFacingSources.Remove(Source); }
+	RefreshMovementRotationOverrides();
+}
+
+void ADKCharacter::SetAutomaticRotationSuppressed(UObject* Source, bool bSuppressed)
+{
+	if (!Source) { return; }
+	if (bSuppressed) { RotationSuppressionSources.Add(Source); }
+	else { RotationSuppressionSources.Remove(Source); }
+	RefreshMovementRotationOverrides();
+}
+
+void ADKCharacter::RefreshMovementRotationOverrides()
+{
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	if (!Movement) { return; }
+	const bool bHasRequest = !ControllerFacingSources.IsEmpty() || !RotationSuppressionSources.IsEmpty();
+	if (bHasRequest && !bMovementRotationCached)
+	{
+		bCachedOrientRotationToMovement = Movement->bOrientRotationToMovement;
+		bCachedUseControllerDesiredRotation = Movement->bUseControllerDesiredRotation;
+		bMovementRotationCached = true;
+	}
+	if (bHasRequest)
+	{
+		Movement->bOrientRotationToMovement = false;
+		Movement->bUseControllerDesiredRotation = RotationSuppressionSources.IsEmpty();
+	}
+	else if (bMovementRotationCached)
+	{
+		Movement->bOrientRotationToMovement = bCachedOrientRotationToMovement;
+		Movement->bUseControllerDesiredRotation = bCachedUseControllerDesiredRotation;
+		bMovementRotationCached = false;
+	}
 }
 
 void ADKCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -91,6 +139,19 @@ void ADKCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	   ETriggerEvent::Triggered,
 	   this,
 	   &ThisClass::Input_Move);
+
+	FirstInput->BindNativeInputAction(
+		InputConfigDataAsset,
+		MyGameplayTags::InputTag_Move,
+		ETriggerEvent::Completed,
+		this,
+		&ThisClass::Input_MoveCompleted);
+	FirstInput->BindNativeInputAction(
+		InputConfigDataAsset,
+		MyGameplayTags::InputTag_Move,
+		ETriggerEvent::Canceled,
+		this,
+		&ThisClass::Input_MoveCompleted);
 
 	FirstInput->BindNativeInputAction(
 		InputConfigDataAsset,
@@ -144,6 +205,17 @@ void ADKCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 void ADKCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+
+	if (FirstAbilitySystemComponent)
+	{
+		DodgeExhaustedChangedHandle = FirstAbilitySystemComponent->RegisterGameplayTagEvent(
+			MyGameplayTags::DK_Status_DodgeExhausted, EGameplayTagEventType::NewOrRemoved)
+			.AddUObject(this, &ThisClass::HandleDodgeExhaustedChanged);
+		RunningStaminaChangedHandle = FirstAbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(
+			UFirstAttributeSet::GetStaminaAttribute()).AddUObject(this, &ThisClass::HandleRunningStaminaChanged);
+	}
+	OnCharacterMovementUpdated.AddUniqueDynamic(this, &ThisClass::HandleSprintMovementUpdated);
+	RefreshRunningState();
 	
 	// 玩家 HUD：左下角血条/精力条。
 	if (PlayerHUDWidgetClass)
@@ -164,10 +236,36 @@ void ADKCharacter::BeginPlay()
 	}
 }
 
+void ADKCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	OnCharacterMovementUpdated.RemoveDynamic(this, &ThisClass::HandleSprintMovementUpdated);
+	GetWorldTimerManager().ClearTimer(SprintRegenPauseTimerHandle);
+	ReleaseSprintRegenPause();
+	if (FirstAbilitySystemComponent && RunningStaminaChangedHandle.IsValid())
+	{
+		FirstAbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(
+			UFirstAttributeSet::GetStaminaAttribute()).Remove(RunningStaminaChangedHandle);
+	}
+	RunningStaminaChangedHandle.Reset();
+	if (FirstAbilitySystemComponent && DodgeExhaustedChangedHandle.IsValid())
+	{
+		FirstAbilitySystemComponent->RegisterGameplayTagEvent(
+			MyGameplayTags::DK_Status_DodgeExhausted, EGameplayTagEventType::NewOrRemoved)
+			.Remove(DodgeExhaustedChangedHandle);
+	}
+	DodgeExhaustedChangedHandle.Reset();
+	GetWorldTimerManager().ClearTimer(DodgeHoldRunTimerHandle);
+	bDodgeInputHeld = false;
+	bRunRequested = false;
+	bIsRunning = false;
+	Super::EndPlay(EndPlayReason);
+}
+
 void ADKCharacter::Input_Move(const FInputActionValue& Value)
 {
 	if (!Controller || IsHitReactOrDead())
 	{
+		if (TurnInPlaceComponent) { TurnInPlaceComponent->ReleaseMovementInput(); }
 		return;
 	}
 	
@@ -177,11 +275,18 @@ void ADKCharacter::Input_Move(const FInputActionValue& Value)
 	
 	const FVector ForwardDirection = MovementRotation.RotateVector(FVector::ForwardVector);
 	const FVector RightDirection = MovementRotation.RotateVector(FVector::RightVector);
+	const FVector WorldInput = ForwardDirection * MovementVector.Y + RightDirection * MovementVector.X;
+	if (TurnInPlaceComponent && TurnInPlaceComponent->HandleMovementInput(WorldInput)) { return; }
 	
 	// Enhanced Input 的二维值约定：Y 前后，X 左右。
 	AddMovementInput(ForwardDirection, MovementVector.Y);
 	AddMovementInput(RightDirection, MovementVector.X);
 	
+}
+
+void ADKCharacter::Input_MoveCompleted(const FInputActionValue& Value)
+{
+	if (TurnInPlaceComponent) { TurnInPlaceComponent->ReleaseMovementInput(); }
 }
 
 void ADKCharacter::Input_Look(const FInputActionValue& Value)
@@ -220,6 +325,7 @@ void ADKCharacter::Input_JumpStarted(const FInputActionValue& Value)
 		return;
 	}
 
+	if (TurnInPlaceComponent) { TurnInPlaceComponent->InterruptTurn(); }
 	Jump();
 }
 
@@ -237,9 +343,7 @@ void ADKCharacter::Input_TargetLock(const FInputActionValue& Value)
 		return;
 	}
 
-	// 格挡/破防/处决期间禁止切换锁定模式：
-	// Guard 与 TargetLock 都会暂存 bOrientRotationToMovement /
-	// bUseControllerDesiredRotation，中途开关会互相覆盖。
+	// 保持现有输入规则：格挡/破防/处决期间不手动开关锁定模式。
 	if (FirstAbilitySystemComponent &&
 		(FirstAbilitySystemComponent->HasMatchingGameplayTag(
 			MyGameplayTags::DK_Status_Defending) ||
@@ -312,23 +416,8 @@ void ADKCharacter::Input_AbilityInputPressed(FGameplayTag InputTag)
 		return;
 	}
 
-	// 连锁弹反：弹反反击演出期间 GuardParry 仍存活（重新激活被 Defending 标签挡住），
-	// 连锁窗口（ANS_ParryChainWindow）内把这次按下边沿转成连锁事件，
-	// 由 GA 自己完成"跳回 Start 段 + 重开 0.15s 弹反窗口"。
-	// 注意不要 return：继续往下转发 ASC，维持 Spec 的 InputPressed 状态一致
-	//（GA 重臂松开监听时按它判断按键是否仍按住）。
-	if (InputTag == MyGameplayTags::InputTag_GuardParry &&
-		FirstAbilitySystemComponent &&
-		FirstAbilitySystemComponent->HasMatchingGameplayTag(MyGameplayTags::DK_Status_ParryChainWindow))
-	{
-		FGameplayEventData ChainEvent;
-		ChainEvent.Instigator = this;
-		ChainEvent.Target = this;
-		UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(
-			this,
-			MyGameplayTags::DK_Event_ParryChainRequest,
-			ChainEvent);
-	}
+	// 弹反连锁也走下方 ASC 输入转发。GA 在 InputPressed 中保存提前输入，
+	// 不在角色层按窗口标签过滤，否则窗口打开前的点按会丢失。
 
 	// 闪避改为“按下立即触发 + 长按衔接奔跑”，不再由 Shift 手势生成。
 	if (InputTag == MyGameplayTags::InputTag_Dodge)
@@ -396,9 +485,26 @@ void ADKCharacter::HandleDodgeHoldElapsed()
 FVector ADKCharacter::GetDodgeInputDirection() const
 {
 	FVector Direction = GetLastMovementInputVector();
+	const APlayerController* PlayerController = Cast<APlayerController>(Controller);
+	const UEnhancedPlayerInput* EnhancedPlayerInput = PlayerController
+		? Cast<UEnhancedPlayerInput>(PlayerController->PlayerInput)
+		: nullptr;
+	const UInputAction* MoveAction = InputConfigDataAsset
+		? InputConfigDataAsset->FindNativeInputActionByTag(MyGameplayTags::InputTag_Move, false)
+		: nullptr;
+
+	if (EnhancedPlayerInput && MoveAction)
+	{
+		// Started 会先于本帧移动的 Triggered 执行，LastMovementInput 可能仍是旧方向。
+		// 直接读取本帧已计算好的动作值，同时保留重映射与手柄输入。
+		const FVector2D MovementVector = EnhancedPlayerInput->GetActionValue(MoveAction).Get<FVector2D>();
+		const FRotator MovementRotation(0.f, PlayerController->GetControlRotation().Yaw, 0.f);
+		Direction = MovementRotation.RotateVector(FVector(MovementVector.Y, MovementVector.X, 0.f));
+	}
+
 	Direction.Z = 0.f;
 	
-	// 没有移动输入：默认向前。
+	// 当前动作值为零也要默认向前，不能回退到已松开的旧方向。
 	if (Direction.IsNearlyZero())
 	{
 		Direction = GetActorForwardVector();
@@ -446,7 +552,40 @@ void ADKCharacter::TriggerAbilityInputTap(const FGameplayTag& InputTag)
 // 作用：统一保存奔跑状态并修改 CharacterMovement 的最大行走速度。
 void ADKCharacter::SetRunning(bool bNewRunning)
 {
-	bIsRunning = bNewRunning;
+	bRunRequested = bNewRunning;
+	RefreshRunningState();
+}
+
+void ADKCharacter::HandleDodgeExhaustedChanged(const FGameplayTag Tag, int32 NewCount)
+{
+	// 进入锁立即停跑；解锁时只恢复仍然成立的长按请求，不重新派发闪避输入。
+	RefreshRunningState();
+}
+
+float ADKCharacter::GetDesiredLocomotionSpeed() const
+{
+	// 直接查询状态，避免同一标签变化中其他 Ability 先恢复移动、读到旧缓存。
+	return bRunRequested && CanRunWithCurrentStamina() ? RunSpeed : WalkSpeed;
+}
+
+bool ADKCharacter::CanRunWithCurrentStamina() const
+{
+	return FirstAbilitySystemComponent && FirstAttributeSet && FirstAttributeSet->GetStamina() > 0.f &&
+		!FirstAbilitySystemComponent->HasMatchingGameplayTag(MyGameplayTags::DK_Status_DodgeExhausted);
+}
+
+void ADKCharacter::HandleRunningStaminaChanged(const FOnAttributeChangeData& Data)
+{
+	// 只在跨过零值时刷新资格，不在每一帧扣费时覆盖动作自己的移动速度。
+	if ((Data.OldValue > 0.f) != (Data.NewValue > 0.f))
+	{
+		RefreshRunningState();
+	}
+}
+
+void ADKCharacter::RefreshRunningState()
+{
+	bIsRunning = bRunRequested && CanRunWithCurrentStamina();
 
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
 	if (!Movement)
@@ -454,14 +593,14 @@ void ADKCharacter::SetRunning(bool bNewRunning)
 		return;
 	}
 
-	// 输入状态仍要更新，但动作锁定期间不能覆盖 Guard/Break/Execute 的速度。
+	// 精力恢复事件也可能发生在动作期间，只更新请求结果，保留动作自己的速度。
 	const bool bActionLocksMoveSpeed = FirstAbilitySystemComponent &&
 		(FirstAbilitySystemComponent->HasMatchingGameplayTag(
 			MyGameplayTags::DK_Status_Defending) ||
 		 FirstAbilitySystemComponent->HasMatchingGameplayTag(
 			MyGameplayTags::DK_Status_GuardBroken) ||
 		 FirstAbilitySystemComponent->HasMatchingGameplayTag(
-			MyGameplayTags::DK_Status_Executing));
+			MyGameplayTags::DK_Status_Executing) || IsHitReactOrDead());
 
 	if (bActionLocksMoveSpeed)
 	{
@@ -469,6 +608,100 @@ void ADKCharacter::SetRunning(bool bNewRunning)
 	}
 
 	Movement->MaxWalkSpeed = GetDesiredLocomotionSpeed();
+}
+
+void ADKCharacter::HandleSprintMovementUpdated(float DeltaSeconds, FVector OldLocation, FVector OldVelocity)
+{
+	if (!HasAuthority() || !bIsRunning || !CanRunWithCurrentStamina() ||
+		!FMath::IsFinite(DeltaSeconds) || DeltaSeconds <= 0.f ||
+		!FMath::IsFinite(SprintStaminaCostPerSecond) || SprintStaminaCostPerSecond <= 0.f)
+	{
+		return;
+	}
+
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	// 有移动输入且真的在地面移动才计费；墙体阻挡、站立、空中和动作根位移不计入奔跑。
+	// 忽略碰撞边缘的微小位置修正，阈值按速度计算，不使用依赖帧率的固定距离。
+	constexpr float MinSprintMovementSpeed = 5.f;
+	if (!Movement || !Movement->IsMovingOnGround() || IsPlayingRootMotion() || Movement->HasRootMotionSources() ||
+		Movement->GetCurrentAcceleration().SizeSquared2D() <= UE_SMALL_NUMBER ||
+		Movement->Velocity.SizeSquared2D() <= FMath::Square(MinSprintMovementSpeed) ||
+		FVector::DistSquared2D(GetActorLocation(), OldLocation) <= FMath::Square(MinSprintMovementSpeed * DeltaSeconds))
+	{
+		return;
+	}
+
+	static const FGameplayTagContainer ActionTags = []
+	{
+		FGameplayTagContainer Tags;
+		Tags.AddTag(MyGameplayTags::DK_Status_Dodging);
+		Tags.AddTag(MyGameplayTags::DK_Status_Attacking);
+		Tags.AddTag(MyGameplayTags::DK_Status_Defending);
+		Tags.AddTag(MyGameplayTags::DK_Status_GuardBroken);
+		Tags.AddTag(MyGameplayTags::DK_Status_Executing);
+		Tags.AddTag(MyGameplayTags::DK_Status_ChangingWeapon);
+		Tags.AddTag(MyGameplayTags::DK_Status_HitReact);
+		Tags.AddTag(MyGameplayTags::Shared_Status_Dead);
+		return Tags;
+	}();
+	if (FirstAbilitySystemComponent->HasAnyMatchingGameplayTags(ActionTags))
+	{
+		return;
+	}
+
+	FGameplayEffectSpecHandle CostSpec = FirstAbilitySystemComponent->MakeOutgoingSpec(
+		UFirstGE_StaminaChange::StaticClass(), 1.f, FirstAbilitySystemComponent->MakeEffectContext());
+	if (!CostSpec.IsValid())
+	{
+		return;
+	}
+
+	// 在扣费和本帧恢复周期执行之前暂停恢复，只增添自己拥有的一层。
+	if (!bOwnsSprintRegenPause)
+	{
+		bOwnsSprintRegenPause = true;
+		FirstAbilitySystemComponent->AddLooseGameplayTag(MyGameplayTags::DK_Status_StaminaRegenPaused);
+	}
+	const float RegenDelay = FMath::IsFinite(SprintStaminaRegenDelay)
+		? FMath::Max(0.01f, SprintStaminaRegenDelay) : 0.5f;
+	SprintRegenResumeTime = GetWorld()->GetTimeSeconds() + RegenDelay;
+	// 每次实际跑动都更新释放期限。即使受击/处决 DisableMovement，不再有移动回调，也能按时恢复。
+	GetWorldTimerManager().SetTimer(SprintRegenPauseTimerHandle, this,
+		&ThisClass::TryReleaseSprintRegenPause, RegenDelay, false);
+
+	const float Cost = FMath::Min(FirstAttributeSet->GetStamina(), SprintStaminaCostPerSecond * DeltaSeconds);
+	CostSpec.Data->SetSetByCallerMagnitude(MyGameplayTags::Combat_SetByCaller_StaminaDelta, -Cost);
+	// 走原有 GE 路径，保留精力夹紧、属性通知和精力条更新。
+	FirstAbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*CostSpec.Data.Get());
+	if (FirstAttributeSet->GetStamina() <= 0.f)
+	{
+		FirstAbilitySystemComponent->StartDodgeStaminaRecovery();
+	}
+}
+
+void ADKCharacter::TryReleaseSprintRegenPause()
+{
+	// 移动更新先于世界 TimerManager；卡顿帧也必须从最后跑动时刻等满延迟。
+	const double Remaining = SprintRegenResumeTime - GetWorld()->GetTimeSeconds();
+	if (Remaining > UE_SMALL_NUMBER)
+	{
+		GetWorldTimerManager().SetTimer(SprintRegenPauseTimerHandle, this,
+			&ThisClass::TryReleaseSprintRegenPause, static_cast<float>(Remaining), false);
+		return;
+	}
+	ReleaseSprintRegenPause();
+}
+
+void ADKCharacter::ReleaseSprintRegenPause()
+{
+	if (bOwnsSprintRegenPause)
+	{
+		bOwnsSprintRegenPause = false;
+		if (FirstAbilitySystemComponent)
+		{
+			FirstAbilitySystemComponent->RemoveLooseGameplayTag(MyGameplayTags::DK_Status_StaminaRegenPaused);
+		}
+	}
 }
 
 bool ADKCharacter::IsHitReactOrDead() const
@@ -487,6 +720,8 @@ void ADKCharacter::PrepareForDeath()
 	GetWorldTimerManager().ClearTimer(DodgeHoldRunTimerHandle);
 	bDodgeInputHeld = false;
 	SetRunning(false);
+	GetWorldTimerManager().ClearTimer(SprintRegenPauseTimerHandle);
+	ReleaseSprintRegenPause();
 
 	if (TargetLockComponent)
 	{

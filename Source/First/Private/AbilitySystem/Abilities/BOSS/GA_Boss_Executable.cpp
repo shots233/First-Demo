@@ -13,9 +13,12 @@
 #include "Animation/AnimMontage.h"
 #include "Character/BossCharacter.h"
 #include "Character/DKCharacter.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/Combat/BossCombatComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "MyGameplayTags.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 
 UGA_Boss_Executable::UGA_Boss_Executable()
 {
@@ -527,6 +530,30 @@ void UGA_Boss_Executable::HandleExecutionApplyDamage(FGameplayEventData Payload)
 
 	bExecutionDamageApplied = true;
 	bBossKilledByExecution = bBossDead;
+
+	// 处决确认成功（闩锁已置位）：在 BOSS 躯干生成血浆特效。
+	// 时刻由玩家蒙太奇的 ApplyDamage 事件 Notify 驱动，天然与动画帧同步；
+	// 致死时 BOSS 仍在场景里（死亡链随后才接管），两条分支都能正常显示。
+	// 不传池化参数：与 PlayDefenseVFX 同款朴素调用，规避 GPU 模拟资产的池化坑。
+	if (UNiagaraSystem* ExecutionVFX = Boss->GetExecutionVFX())
+	{
+		const float TorsoHeight =
+			Boss->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() * 0.65f;
+
+		// 喷溅朝向处决者（Player → Boss），有方向感的血浆比球形爆开更有打击感。
+		FVector ToBoss = Boss->GetActorLocation() - Player->GetActorLocation();
+		ToBoss.Z = 0.f;
+		const FRotator SpawnRotation = ToBoss.IsNearlyZero()
+			? FRotator::ZeroRotator
+			: ToBoss.Rotation();
+
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			Boss,
+			ExecutionVFX,
+			Boss->GetActorLocation() + FVector(0.f, 0.f, TorsoHeight),
+			SpawnRotation,
+			FVector::OneVector * FMath::Max(Boss->GetExecutionVFXScale(), 0.05f));
+	}
 }
 
 void UGA_Boss_Executable::HandleExecutableExpired(FGameplayEventData Payload)

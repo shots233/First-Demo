@@ -4,9 +4,11 @@
 
 #include "CoreMinimal.h"
 #include "AbilitySystem/Abilities/FirstDKGameplayAbility.h"
+#include "TimerManager.h"
 #include "FirstGA_DKGuardParry.generated.h"
 
 class UAnimMontage;
+class UAnimInstance;
 
 /**
  * 
@@ -32,6 +34,14 @@ protected:
 		const FGameplayAbilityActivationInfo ActivationInfo,
 		const FGameplayEventData* TriggerEventData) override;
 
+	// ASC 先更新 Spec 的按键状态，再调用这两个入口；不再重复创建输入任务。
+	virtual void InputPressed(const FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayAbilityActivationInfo ActivationInfo) override;
+	virtual void InputReleased(const FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayAbilityActivationInfo ActivationInfo) override;
+
 	virtual void EndAbility(
 		const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo,
@@ -44,17 +54,16 @@ private:
 	void HandleParryWindowElapsed();
 
 	UFUNCTION()
-	void HandleInputReleased(float TimeHeld);
-
-	UFUNCTION()
 	void HandleGuardHit(FGameplayEventData Payload);
 
 	UFUNCTION()
 	void HandleParrySuccess(FGameplayEventData Payload);
 
-	// 连锁弹反：连锁窗口（ANS_ParryChainWindow）内按下弹反键时由角色层发来。
 	UFUNCTION()
-	void HandleParryChainPressed(FGameplayEventData Payload);
+	void HandleParryChainWindowOpened(FGameplayEventData Payload);
+
+	UFUNCTION()
+	void HandleParryChainWindowClosed(FGameplayEventData Payload);
 
 	UFUNCTION()
 	void HandleMontageCompleted();
@@ -62,28 +71,50 @@ private:
 	UFUNCTION()
 	void HandleMontageInterrupted();
 
+	UFUNCTION()
+	void HandleMontageSectionChanged(UAnimMontage* Montage, FName SectionName, bool bLooped);
+
 	void CancelActiveAttackAbilities();
+	void StartGuardPushback(const FGameplayEventData& Payload);
+	void StopGuardPushback();
+	bool MeetsGuardRequirements(const FGameplayAbilityActorInfo* ActorInfo) const;
 	void RemoveBlockingTag();
 	void RemoveParryWindowTag();
-	void JumpToGuardSection(FName SectionName);
+	void CloseParryChainWindow();
+	void ClearBufferedParryInput();
+	void TryConsumeBufferedParryInput();
+	void UpdateParryMontageExit();
+	void HandleParryPlaybackEnd();
+	void RestoreParryAutoBlendOut();
+	bool JumpToGuardSection(FName SectionName);
 	void BeginGuardExit();
 	void FinishGuard(bool bWasCancelled);
 
-	// 连锁弹反时重开一轮 0.15s 弹反窗口（重挂标签 + 重启窗口计时器）。
+	// 首次按下、连锁接招共用同一个计时器；松开不缩短本轮判定。
 	void ReopenParryWindow();
 
 	bool bOwnsBlockingTag = false;
 	bool bOwnsParryWindowTag = false;
+	bool bOwnsParryChainWindowTag = false;
+	bool bGuardInputHeld = false;
+	bool bChainWindowConsumed = false;
+	bool bGuardMontageCompleted = false;
+	// 只表示正式收势/取消，不用它记录一次普通松键。
 	bool bExitRequested = false;
 
-	// 弹反成功后的反击演出进行中：松键只摘防御标签、不再跳 End 段截断动画，
-	// Parry 段完整播完后由 HandleMontageCompleted 统一收势（方案 A）。
+	// 成功演出期间允许松开后重新点按；每次成功演出只消费一次连锁窗口。
 	bool bParryRiposteActive = false;
+	FTimerHandle ParryWindowTimerHandle;
+	FTimerHandle ParryPlaybackEndTimerHandle;
+	int32 ParryPlaybackInstanceID = INDEX_NONE;
+	bool bSavedParryAutoBlendOut = true;
+	// 只移除本技能创建的推退；源到时由移动组件自动清理。
+	TOptional<uint16> GuardPushbackSourceID;
+	double BufferedParryInputExpiresAt = -1.0;
+	// 通知对象属于共享资产；窗口所有权必须保存在这个逐角色的技能实例中。
+	TSet<TWeakObjectPtr<const UObject>> ActiveChainWindowSources;
+	TWeakObjectPtr<UAnimInstance> GuardAnimInstance;
 	bool bSavedMovementState = false;
-	bool bTargetLockWasActiveAtStart = false;
-
-	bool bSavedOrientRotationToMovement = true;
-	bool bSavedUseControllerDesiredRotation = false;
 
 	UPROPERTY()
 	TObjectPtr<UAnimMontage> ActiveGuardMontage;

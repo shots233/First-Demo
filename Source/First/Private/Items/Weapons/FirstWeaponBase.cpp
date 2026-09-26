@@ -6,11 +6,13 @@
 #include "AbilitySystemComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
 #include "MyGameplayTags.h"
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
+#include "Performance/FirstCombatWarmupSubsystem.h"
 #include "Sound/SoundBase.h"
 
 // Sets default values
@@ -48,6 +50,28 @@ AFirstWeaponBase::AFirstWeaponBase()
 	WeaponTelegraphComponent->SetAutoActivate(false);
 	WeaponTelegraphComponent->SetAutoDestroy(false);
 
+}
+
+void AFirstWeaponBase::BeginPlay()
+{
+	Super::BeginPlay();
+	UFirstCombatWarmupSubsystem* Warmup = GetWorld()->GetSubsystem<UFirstCombatWarmupSubsystem>();
+	if (SlashTrailTemplate && SlashTrailComponent)
+	{
+		SlashTrailComponent->SetAsset(SlashTrailTemplate);
+		if (Warmup)
+		{
+			Warmup->PrepareSystem(SlashTrailTemplate);
+		}
+	}
+	if (WeaponTelegraphTemplate && WeaponTelegraphComponent)
+	{
+		WeaponTelegraphComponent->SetAsset(WeaponTelegraphTemplate);
+		if (Warmup)
+		{
+			Warmup->PrepareSystem(WeaponTelegraphTemplate);
+		}
+	}
 }
 
 bool AFirstWeaponBase::IsTargetDead(const AActor* Target)

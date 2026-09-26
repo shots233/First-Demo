@@ -61,6 +61,12 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
+#if WITH_DEV_AUTOMATION_TESTS
+	friend struct FFirstTargetLockTestAccess;
+	friend struct FFirstTargetLockAttackTestAccess;
+	friend struct FFirstTurnInPlaceTestAccess;
+#endif
+
 	TArray<AEnemyCharacter*> GatherCandidates(bool bRequireAcquireCone) const;
 
 	bool IsCandidateValid(AEnemyCharacter* Candidate,bool bRequireAcquireCone) const;
@@ -68,13 +74,16 @@ private:
 	bool IsCharacterDead(const ABaseCharacter* Character) const;
 	bool HasLineOfSightTo(AEnemyCharacter* Candidate) const;
 
-	bool ProjectTargetToScreen(AEnemyCharacter* Candidate,FVector2D& OutScreenPosition) const;
+	bool ProjectTargetToScreen(AEnemyCharacter* Candidate, FVector2D& OutScreenPosition,
+		bool bRequireOnScreen = true) const;
 
 	float CalculateAcquireScore(AEnemyCharacter* Candidate) const;
 
 	AEnemyCharacter* FindBestTarget() const;
 
 	void SetCurrentTarget(AEnemyCharacter* NewTarget);
+	UFUNCTION()
+	void HandleTargetEndPlay(AActor* Actor, EEndPlayReason::Type EndPlayReason);
 	void UpdateLockedTarget(float DeltaTime);
 	void UpdateControlRotation(float DeltaTime);
 
@@ -113,11 +122,11 @@ private:
 	UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Target Lock|Camera",meta=(AllowPrivateAccess="true", ClampMin="0.0"))
 	float CameraRotationInterpSpeed = 8.f;
 
-	//最小相机俯仰角（锁定状态下相机可抬起的最大角度，负值表示上仰）
+	//最小相机俯仰角（负值表示下俯）
 	UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Target Lock|Camera",meta=(AllowPrivateAccess="true"))
 	float MinCameraPitch = -35.f;
 
-	//最大相机俯仰角（锁定状态下相机可低头的最大角度，正值表示下俯）
+	//最大相机俯仰角（正值表示上仰）
 	UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Target Lock|Camera",meta=(AllowPrivateAccess="true"))
 	float MaxCameraPitch = 25.f;
 
@@ -125,7 +134,7 @@ private:
 	UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Target Lock|Switch",meta=(AllowPrivateAccess="true", ClampMin="0.0"))
 	float SwitchCooldown = 0.2f;
 
-	//切换屏幕死区（屏幕中心区域像素阈值，用于判定切换方向）
+	//切换屏幕死区（候选与当前目标的水平像素差阈值，用于判定切换方向）
 	UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Target Lock|Switch",meta=(AllowPrivateAccess="true", ClampMin="0.0"))
 	float SwitchScreenDeadZone = 20.f;
 
@@ -154,9 +163,4 @@ private:
 	bool bLockModeActive = false;
 	bool bAddedTargetLockTag = false;
 
-	bool bMovementSettingsCached = false;
-	bool bCachedOrientRotationToMovement = true;
-	bool bCachedUseControllerDesiredRotation = false;
-
-		
 };

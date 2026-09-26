@@ -1,7 +1,9 @@
 #include "AbilitySystem/Abilities/DK/FirstGA_DKDodge.h"
 
 #include "AbilitySystemComponent.h"
+#include "AbilitySystemGlobals.h"
 #include "AbilitySystem/FirstAbilitySystemComponent.h"
+#include "AbilitySystem/FirstAttributeSet.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitDelay.h"
 #include "Animation/AnimMontage.h"
@@ -21,6 +23,7 @@ UFirstGA_DKDodge::UFirstGA_DKDodge()
 
 	ActivationOwnedTags.AddTag(MyGameplayTags::DK_Status_Dodging);
 	ActivationBlockedTags.AddTag(MyGameplayTags::DK_Status_Dodging);
+	ActivationBlockedTags.AddTag(MyGameplayTags::DK_Status_DodgeExhausted);
 	ActivationBlockedTags.AddTag(MyGameplayTags::DK_Status_ChangingWeapon);
 	ActivationBlockedTags.AddTag(MyGameplayTags::Shared_Status_Dead);
 	// 不要把 DK.Status.Defending 加进来：格挡可以被闪避取消。
@@ -28,6 +31,27 @@ UFirstGA_DKDodge::UFirstGA_DKDodge()
 	ActivationBlockedTags.AddTag(MyGameplayTags::DK_Status_Executing);
 
 	CostGameplayEffectClass = UFirstGE_DodgeCost::StaticClass();
+}
+
+bool UFirstGA_DKDodge::CheckCost(const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo, FGameplayTagContainer* OptionalRelevantTags) const
+{
+	const UAbilitySystemComponent* ASC = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
+	if (ASC && ASC->GetNumericAttribute(UFirstAttributeSet::GetStaminaAttribute()) > 0.f &&
+		!ASC->HasMatchingGameplayTag(MyGameplayTags::DK_Status_DodgeExhausted))
+	{
+		// 本技能的费用只有精力，允许不足额支付最后一次。
+		// 原生 CheckCost 会拒绝扣费后为负的情况；实际仍用原 Cost GE 扣费，
+		// 再由 AttributeSet 将剩余精力夹到 0，保留统一的属性和 UI 更新路径。
+		return true;
+	}
+
+	const FGameplayTag& CostTag = UAbilitySystemGlobals::Get().ActivateFailCostTag;
+	if (OptionalRelevantTags && CostTag.IsValid())
+	{
+		OptionalRelevantTags->AddTag(CostTag);
+	}
+	return false;
 }
 
 bool UFirstGA_DKDodge::CanActivateAbility(
@@ -90,16 +114,21 @@ void UFirstGA_DKDodge::ActivateAbility(
 		return;
 	}
 
-	// CommitAbility 统一执行 Cost/Cooldown 检查和应用。体力不足时不会先移动再失败。
+	// 激活与提交都检查精力大于 0 且不在恢复锁中；成功后仍由原 Cost GE 扣费。
 	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
 	{
 		FinishDodge(true);
 		return;
 	}
 
-	// 到这里说明闪避的 Cost / Cooldown 已经提交成功。
-	// 成功 Commit 后才取消允许被 Dodge 打断的 Attack / Guard，
-	// 避免精力不足时既没闪出去又丢了格挡。
+	if (UFirstAbilitySystemComponent* ASC = GetFirstAbilitySystemComponentFromActorInfo();
+		ASC && ASC->GetNumericAttribute(UFirstAttributeSet::GetStaminaAttribute()) <= 0.f)
+	{
+		// 不足额支付和恰好耗尽都锁住后续闪避；锁由 ASC 持有，跨本次技能结束保留。
+		ASC->StartDodgeStaminaRecovery();
+	}
+
+	// 成功 Commit 后才取消 Attack / Guard，避免启动被拒绝却丢了原来的动作。
 	CancelDodgeInterruptibleAbilities();
 	
 	// 8 向：方向来源由角色提供（玩家=按键，BOSS=以后AI），再量化索引。
@@ -142,6 +171,7 @@ void UFirstGA_DKDodge::EndAbility(const FGameplayAbilitySpecHandle Handle, const
 	const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled)
 {
 	// 所有清理必须发生在唯一一次 Super::EndAbility 之前。
+	// DodgeExhausted 由 ASC 在精力回满时移除，不能随闪避完成或取消清理。
 	if (UFirstAbilitySystemComponent* ASC =GetFirstAbilitySystemComponentFromActorInfo())
 	{
 		ASC->RemoveLooseGameplayTag(MyGameplayTags::DK_Status_Invincible);

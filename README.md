@@ -15,7 +15,10 @@ Developed with Unreal Engine 5.6
 | Slash Trail (SoftTofu) | `Content/SlashTrail_SoftTofu/` | 武器拖影/剑光特效 |
 | Battle Wounds | `Content/Battle_Wounds/` | 受击伤口贴花 |
 | Weapons Woosh | `Content/Weapons_woosh/` | 挥砍音效 |
+| Blood VFX Pack | `Content/Blood_VFX_Pack/` | BOSS 受击血效 |
 | Rapier AnimSet | `Content/Rapier_AnimSet/` | 备用动画（项目当前未引用） |
+
+本地另有 `Content/RealisticSwordSoundEffects/` 和 `Content/SwordTrailVFX/` 两个备用素材目录，也不纳入版本库。
 
 其余说明：
 

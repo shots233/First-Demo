@@ -96,6 +96,14 @@ struct FFirstMeleeDefenseData
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Defense", meta=(ClampMin="0.0"))
 	float GuardStaminaDamage = 0.f;
 
+	// 普通格挡未破防时被推退的距离；设为 0 可关闭该招式的推退。
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Defense", meta=(ClampMin="0.0", Units="cm"))
+	float GuardPushbackDistance = 30.f;
+
+	// 普通格挡推退的持续时间。
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Defense", meta=(ClampMin="0.0", Units="s"))
+	float GuardPushbackDuration = 0.12f;
+
 	// 弹反成功时扣除的 BOSS 韧性。当前普通攻击和三连都填 50。
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Defense", meta=(ClampMin="0.0"))
 	float ParryPoiseDamage = 0.f;

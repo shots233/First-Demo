@@ -18,6 +18,6 @@ public:
 	// 作用：连击输入窗口开始时，向当前角色发送 DK.Event.ComboWindow.Open。
 	virtual void NotifyBegin(USkeletalMeshComponent* MeshComp,UAnimSequenceBase* Animation,float TotalDuration,const FAnimNotifyEventReference& EventReference) override;
 
-	// 作用：连击输入窗口结束时发送 Close，让攻击 Ability 停止等待下一次按键。
+	// 作用：连击窗口结束时发送携带来源的 Close，由攻击 Ability 决定衔接和输入容错。
 	virtual void NotifyEnd(USkeletalMeshComponent* MeshComp,UAnimSequenceBase* Animation,const FAnimNotifyEventReference& EventReference) override;
 };

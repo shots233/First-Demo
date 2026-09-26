@@ -29,6 +29,7 @@ public:
 	FOnTargetInteractedDelegate OnWeaponPulledFromTarget;
 	
 protected:
+	virtual void BeginPlay() override;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Weapon")
 	TObjectPtr<UStaticMeshComponent> WeaponMesh;

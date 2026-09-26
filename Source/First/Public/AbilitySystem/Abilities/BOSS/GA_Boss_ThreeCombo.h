@@ -7,6 +7,8 @@
 #include "Types/FirstCombatTypes.h"
 #include "GA_Boss_ThreeCombo.generated.h"
 
+class UAbilityTask_PlayMontageAndWait;
+
 /**
  * BOSS 三连击（一个技能）。
  * 三段蒙太奇按顺序自动播放，不需要玩家输入；每段有效帧命中都结算伤害。
@@ -35,17 +37,19 @@ protected:
 	UFUNCTION()
 	void HandleMeleeHit(FGameplayEventData Payload);
 
-	UFUNCTION()
-	void HandleMontageCompleted();
-
-	UFUNCTION()
-	void HandleMontageInterrupted();
-
 	// UE 5.6 基类已移除 CooldownTags，需要自己声明并覆写 GetCooldownTags。
 	FGameplayTagContainer CooldownTags;
 	virtual const FGameplayTagContainer* GetCooldownTags() const override;
 
 private:
+	UFUNCTION()
+	void HandleMontageCompleted();
+	UFUNCTION()
+	void HandleMontageInterrupted();
+	UPROPERTY()
+	TObjectPtr<UAbilityTask_PlayMontageAndWait> AttackMontageTask;
+	bool bEndingAttack = false;
+
 	UPROPERTY(EditDefaultsOnly, Category="Combat|Motion Warping")
 	FFirstAttackWarpingData AttackWarpingData;
 };

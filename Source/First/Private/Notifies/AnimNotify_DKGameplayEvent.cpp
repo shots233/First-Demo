@@ -5,6 +5,7 @@
 
 #include "AbilitySystemBlueprintLibrary.h"
 #include "Abilities/GameplayAbilityTypes.h"
+#include "Animation/AnimSequenceBase.h"
 
 void UAnimNotify_DKGameplayEvent::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
                                          const FAnimNotifyEventReference& EventReference)
@@ -18,8 +19,11 @@ void UAnimNotify_DKGameplayEvent::Notify(USkeletalMeshComponent* MeshComp, UAnim
 	}
 	
 	FGameplayEventData EventData;
+	EventData.EventTag = EventTag;
 	EventData.Instigator = OwnerActor;
 	EventData.Target = OwnerActor;
+	EventData.OptionalObject = this;
+	EventData.OptionalObject2 = Animation;
 	
 	UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(OwnerActor, EventTag, EventData);
 	

@@ -7,7 +7,7 @@
 
 class UCameraShakeBase;
 class UAbilitySystemComponent;
-class UParticleSystem;
+class UNiagaraSystem;
 class USoundBase;
 
 UCLASS(ClassGroup=(Combat), meta=(BlueprintSpawnableComponent))
@@ -17,6 +17,7 @@ class FIRST_API UDKDefenseComponent : public UActorComponent
 
 public:
 	UDKDefenseComponent();
+	virtual void BeginPlay() override;
 
 	// BOSS 攻击 GA 在真正应用生命伤害前调用一次。
 	EFirstDefenseResult ResolveIncomingMeleeAttack(
@@ -31,6 +32,11 @@ public:
 	FORCEINLINE float GetParryWindowDuration() const
 	{
 		return ParryWindowDuration;
+	}
+
+	FORCEINLINE float GetParryInputBufferDuration() const
+	{
+		return ParryInputBufferDuration;
 	}
 
 	FORCEINLINE float GetGuardMoveSpeed() const
@@ -57,9 +63,15 @@ private:
 		meta=(AllowPrivateAccess="true", ClampMin="0.0"))
 	float MinimumStaminaToGuard = 20.f;
 
+	// 每次弹反的有效判定时长；点按后松开不会缩短本轮窗口。
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Defense|Parry",
 		meta=(AllowPrivateAccess="true", ClampMin="0.0"))
 	float ParryWindowDuration = 0.15f;
+
+	// 连锁窗口开启前允许提前输入的时长；最多缓存一次按下，设为 0 禁用提前缓冲。
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Defense|Parry",
+		meta=(AllowPrivateAccess="true", ClampMin="0.0"))
+	float ParryInputBufferDuration = 0.1f;
 
 	// 格挡蒙太奇通过上半身插槽播放，保留下半身移动并限制移动速度。
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Defense|Guard",
@@ -102,20 +114,20 @@ private:
 	// 普通格挡成功（命中但被挡住）：金属火花。
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Defense|VFX",
 		meta=(AllowPrivateAccess="true"))
-	TObjectPtr<UParticleSystem> GuardHitVFX;
+	TObjectPtr<UNiagaraSystem> GuardHitVFX;
 
 	// 弹反成功：更明亮的火花。
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Defense|VFX",
 		meta=(AllowPrivateAccess="true"))
-	TObjectPtr<UParticleSystem> ParrySuccessVFX;
+	TObjectPtr<UNiagaraSystem> ParrySuccessVFX;
 
 	// 格挡被破防：重击炸裂。
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Defense|VFX",
 		meta=(AllowPrivateAccess="true"))
-	TObjectPtr<UParticleSystem> GuardBrokenVFX;
+	TObjectPtr<UNiagaraSystem> GuardBrokenVFX;
 
 	// 在玩家躯干位置生成一次性防御结果特效，方向向来击侧（Attacker → Defender）；为空时静默。
-	void PlayDefenseVFX(UParticleSystem* VFX, const AActor* Attacker) const;
+	void PlayDefenseVFX(UNiagaraSystem* VFX, const AActor* Attacker) const;
 
 	// —— 镜头震动 ——
 	// 玩家视角的打击反馈：弹反/格挡成功瞬间让镜头抖一下。

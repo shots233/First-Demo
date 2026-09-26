@@ -23,7 +23,7 @@ public class First : ModuleRules
 			"MotionWarping"
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] {  });
+		PrivateDependencyModuleNames.AddRange(new string[] { "SlateCore", "Slate", "RenderCore", "RHI", "NiagaraShader" });
 
 		// Uncomment if you are using Slate UI
 		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });

@@ -46,6 +46,9 @@ namespace MyGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(DK_Event_GuardHit, "DK.Event.GuardHit");
 	UE_DEFINE_GAMEPLAY_TAG(DK_Event_GuardBroken, "DK.Event.GuardBroken");
 	UE_DEFINE_GAMEPLAY_TAG(DK_Event_ParrySuccess, "DK.Event.ParrySuccess");
+	UE_DEFINE_GAMEPLAY_TAG(DK_Event_ParryChainWindow_Open, "DK.Event.ParryChainWindow.Open");
+	UE_DEFINE_GAMEPLAY_TAG(DK_Event_ParryChainWindow_Close, "DK.Event.ParryChainWindow.Close");
+	// 保留旧事件 Tag 以兼容已有资产；连锁按键已改由 GuardParry GA 监听输入。
 	UE_DEFINE_GAMEPLAY_TAG(DK_Event_ParryChainRequest, "DK.Event.ParryChainRequest");
 	UE_DEFINE_GAMEPLAY_TAG(DK_Event_ExecutionAbortedByBoss, "DK.Event.ExecutionAbortedByBoss");
 
@@ -94,6 +97,9 @@ namespace MyGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Boss_Cooldown_Attack_ThreeCombo, "Boss.Cooldown.Attack.ThreeCombo");
 	UE_DEFINE_GAMEPLAY_TAG(Boss_Cooldown_Attack_RetreatChargedSlash, "Boss.Cooldown.Attack.RetreatChargedSlash");
 	UE_DEFINE_GAMEPLAY_TAG(Boss_Cooldown_Attack_FiveCombo, "Boss.Cooldown.Attack.FiveCombo");
+	UE_DEFINE_GAMEPLAY_TAG(Boss_Cooldown_Attack_Pursuit, "Boss.Cooldown.Attack.Pursuit");
+	UE_DEFINE_GAMEPLAY_TAG(Boss_Ability_Attack_Pursuit, "Boss.Ability.Attack.Pursuit");
+	UE_DEFINE_GAMEPLAY_TAG(Boss_Event_PursuitPoint, "Boss.Event.PursuitPoint");
 	UE_DEFINE_GAMEPLAY_TAG(Boss_Event_RetreatChargedSlash_ChargeBegin, "Boss.Event.RetreatChargedSlash.ChargeBegin");
 	UE_DEFINE_GAMEPLAY_TAG(Boss_Event_RetreatChargedSlash_Commit, "Boss.Event.RetreatChargedSlash.Commit");
 	UE_DEFINE_GAMEPLAY_TAG(Boss_Status_AttackDirectionLocked, "Boss.Status.AttackDirectionLocked");
@@ -112,6 +118,7 @@ namespace MyGameplayTags
 
 	UE_DEFINE_GAMEPLAY_TAG(DK_Status_Attacking, "DK.Status.Attacking");
 	UE_DEFINE_GAMEPLAY_TAG(DK_Status_Dodging, "DK.Status.Dodging");
+	UE_DEFINE_GAMEPLAY_TAG(DK_Status_DodgeExhausted, "DK.Status.DodgeExhausted");
 	
 	UE_DEFINE_GAMEPLAY_TAG(DK_Status_TargetLocked,"DK.Status.TargetLocked");
 	

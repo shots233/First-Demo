@@ -7,6 +7,7 @@
 #include "GameplayEffectExtension.h"
 #include "MyGameplayTags.h"
 #include "Abilities/GameplayAbilityTypes.h"
+#include "Abilities/GameplayAbility.h"
 #include "Components/UI/PawnUIComponent.h"
 #include "Interfaces/PawnUIInterface.h"
 
@@ -60,6 +61,9 @@ void UFirstAttributeSet::PostGameplayEffectExecute(const struct FGameplayEffectM
 		// 这样敌人的攻击、陷阱伤害也能复用同一条扣血与死亡判断路径。
 		const float OldHealth = GetHealth();
 		const float NewHealth = FMath::Clamp(OldHealth - DamageDone, 0.f, GetMaxHealth());
+		// SetHealth 的同步回调可能触发受击并取消攻击，保留本次命中前的状态供后续决策使用。
+		FGameplayTagContainer TargetTagsBeforeDamage;
+		Data.Target.GetOwnedGameplayTags(TargetTagsBeforeDamage);
 		SetHealth(NewHealth);
 		
 		AActor* TargetActor = Data.Target.GetAvatarActor();
@@ -109,6 +113,11 @@ void UFirstAttributeSet::PostGameplayEffectExecute(const struct FGameplayEffectM
 			EventData.Target = TargetActor;
 			EventData.EventMagnitude = ActualDamage;
 			EventData.ContextHandle = DamageContext;
+			EventData.TargetTags = TargetTagsBeforeDamage;
+			if (const UGameplayAbility* SourceAbility = DamageContext.GetAbility())
+			{
+				EventData.InstigatorTags.AppendTags(SourceAbility->GetAssetTags());
+			}
 
 			UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(
 				TargetActor,

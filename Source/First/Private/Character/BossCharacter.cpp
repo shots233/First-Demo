@@ -15,6 +15,7 @@
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/Combat/BossCombatComponent.h"
+#include "Components/Combat/FirstBossRetaliationComponent.h"
 #include "Items/Weapons/BossWeapon.h"
 #include "MyGameplayTags.h"
 #include "AbilitySystem/GameplayEffects/FirstGE_PoiseChange.h"
@@ -31,6 +32,7 @@ ABossCharacter::ABossCharacter()
 	
 	EnemyUIComponent = CreateDefaultSubobject<UEnemyUIComponent>(TEXT("EnemyUIComponent"));
 	BossCombatComponent = CreateDefaultSubobject<UBossCombatComponent>(TEXT("BossCombatComponent"));
+	RetaliationComponent = CreateDefaultSubobject<UFirstBossRetaliationComponent>(TEXT("RetaliationComponent"));
 	ExecutionPoint =CreateDefaultSubobject<USceneComponent>(TEXT("ExecutionPoint"));
 	ExecutionPoint->SetupAttachment(GetRootComponent());
 
@@ -76,17 +78,30 @@ bool ABossCharacter::HasSafeRetreatSpace(
 	float NavProjectionTolerance,
 	float MaxLandingHeightDelta) const
 {
-	if (!FMath::IsFinite(RetreatDistance) ||
+	return HasSafeGroundTravel(
+		-GetActorForwardVector(),
+		RetreatDistance,
+		NavProjectionTolerance,
+		MaxLandingHeightDelta);
+}
+
+bool ABossCharacter::HasSafeGroundTravel(
+	const FVector& Direction,
+	float Distance,
+	float NavProjectionTolerance,
+	float MaxLandingHeightDelta) const
+{
+	if (!FMath::IsFinite(Distance) ||
 		!FMath::IsFinite(NavProjectionTolerance) ||
 		!FMath::IsFinite(MaxLandingHeightDelta) ||
-		RetreatDistance < 0.f ||
+		Distance < 0.f ||
 		NavProjectionTolerance < 0.f ||
 		MaxLandingHeightDelta < 0.f)
 	{
 		return false;
 	}
 
-	if (RetreatDistance <= KINDA_SMALL_NUMBER)
+	if (Distance <= KINDA_SMALL_NUMBER)
 	{
 		return true;
 	}
@@ -99,18 +114,24 @@ bool ABossCharacter::HasSafeRetreatSpace(
 		return false;
 	}
 
-	FVector RetreatDirection = -GetActorForwardVector();
-	RetreatDirection.Z = 0.f;
-	if (!RetreatDirection.Normalize())
+	if (!FMath::IsFinite(Direction.X) ||
+		!FMath::IsFinite(Direction.Y) ||
+		!FMath::IsFinite(Direction.Z))
+	{
+		return false;
+	}
+
+	FVector TravelDirection(Direction.X, Direction.Y, 0.f);
+	if (!TravelDirection.Normalize())
 	{
 		return false;
 	}
 
 	// Sweep 使用胶囊中心；导航落点使用角色脚底，避免把胶囊半高误判成落差。
 	const FVector SweepStart = Capsule->GetComponentLocation();
-	const FVector SweepEnd = SweepStart + RetreatDirection * RetreatDistance;
+	const FVector SweepEnd = SweepStart + TravelDirection * Distance;
 	FComponentQueryParams QueryParams(
-		SCENE_QUERY_STAT(BossSafeRetreatSweep),
+		SCENE_QUERY_STAT(BossSafeGroundTravelSweep),
 		this);
 	QueryParams.AddIgnoredActor(this);
 
@@ -138,7 +159,7 @@ bool ABossCharacter::HasSafeRetreatSpace(
 	}
 
 	const FVector DesiredLanding =
-		GetNavAgentLocation() + RetreatDirection * RetreatDistance;
+		GetNavAgentLocation() + TravelDirection * Distance;
 	const FVector ProjectionExtent(
 		FMath::Max(NavProjectionTolerance, 1.f),
 		FMath::Max(NavProjectionTolerance, 1.f),
@@ -168,7 +189,7 @@ bool ABossCharacter::HasSafeRetreatSpace(
 		return false;
 	}
 
-	// 根运动会沿直线后撤，不能只验证终点：中间若跨过窄坑或断开的 NavMesh，
+	// 根运动会沿直线移动，不能只验证终点：中间若跨过窄坑或断开的 NavMesh，
 	// 终点仍可能投影成功。导航射线使用同一个 AIController/NavAgent 检查整段可行走性。
 	FVector NavigationHitLocation = DesiredLanding;
 	return !UNavigationSystemV1::NavigationRaycast(

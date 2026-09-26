@@ -83,5 +83,11 @@ protected:
 
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category="AnimData|Locomotion")
 	float MoveRight = 0.f;
+
+	// 当前是否手持武器。AnimBP 用它选择持剑/空手的站立与移动姿态分支。
+	// 装备状态唯一事实来源是 DKCombatComponent 的 CurrentEquippedWeaponTag，
+	// 动画层不自行记录，避免与装备/收剑流程不同步。
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category="AnimData|State")
+	bool bWeaponEquipped = false;
 	
 };

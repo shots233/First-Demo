@@ -20,6 +20,9 @@ public:
 	void OnAbilityInputPressed(const FGameplayTag& InInputTag);
 	// 接收角色松开按键后的 Tag：让需要监听松开事件的 AbilityTask 得到通知。
 	void OnAbilityInputReleased(const FGameplayTag& InInputTag);
+
+	// 闪避或奔跑成功扣空精力后调用；恢复到真实上限前不能再次闪避和奔跑。
+	void StartDodgeStaminaRecovery();
 	
 	// 根据武器数据资产授予一批 Ability，并把运行时 Handle 输出给调用方，供卸下武器时移除。
 	UFUNCTION(BlueprintCallable, Category="First|AbilityS")
@@ -27,5 +30,17 @@ public:
 	
 	UFUNCTION(BlueprintCallable, Category="First|AbilityS")
 	void RemoveGrantedWeaponAbilities(UPARAM(ref) TArray<FGameplayAbilitySpecHandle>& InSpecHandlesToRemove);
-	
+
+protected:
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+private:
+	void HandleDodgeRecoveryAttributeChanged(const FOnAttributeChangeData& Data);
+	void TryFinishDodgeStaminaRecovery();
+	void ClearDodgeStaminaRecovery();
+
+	FDelegateHandle DodgeRecoveryStaminaChangedHandle;
+	FDelegateHandle DodgeRecoveryMaxStaminaChangedHandle;
+	bool bOwnsDodgeExhaustedTag = false;
+	bool bEndingPlay = false;
 };

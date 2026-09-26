@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Character/EnemyCharacter.h"
 #include "Types/FirstCombatTypes.h"
+#include "Types/FirstBossPursuitSettings.h"
 #include "TimerManager.h"
 #include "BossCharacter.generated.h"
 
@@ -14,7 +15,9 @@ class UBossCombatComponent;
 class ABossWeapon;
 class USceneComponent;
 class UParticleSystem;
+class UNiagaraSystem;
 class USoundBase;
+class UFirstBossRetaliationComponent;
 
 UENUM(BlueprintType)
 enum class EBossRotationMode : uint8
@@ -33,6 +36,13 @@ class FIRST_API ABossCharacter : public AEnemyCharacter
 	
 public:
 	ABossCharacter();
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Boss|Combat")
+	TObjectPtr<UFirstBossRetaliationComponent> RetaliationComponent;
+
+	// 行为树远追分支使用的独立前闪刺击：距离、冷却及动画集中在此。
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Boss|Pursuit")
+	FFirstBossPursuitSettings PursuitSettings;
 	// 顶部 BOSS 血条显示的名字（在 BP_Boss 类默认值里填）。
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Boss|UI", meta=(AllowPrivateAccess="true"))
 	FText BossName;
@@ -205,6 +215,19 @@ public:
 		meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UParticleSystem> BloodVFX;
 
+	// 处决成功（致死/非致死通用）的血浆特效（生成在 BOSS 躯干位置）。
+	// 由 GA_Boss_Executable 在伤害结算确认成功的瞬间生成；留空则该时刻无特效。
+	// 音效不进这里：刺入音请配在处决蒙太奇的 ApplyDamage 事件 Notify 同帧，
+	// 用 AnimNotify_PlaySFX，保证与动画帧同步。
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Boss|Feedback",
+		meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UNiagaraSystem> ExecutionVFX;
+
+	// 处决特效的尺寸倍率（同一资产分别适配致死/非致死时可在蒙太奇侧另配，这里只做全局缩放）。
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Boss|Feedback",
+		meta=(AllowPrivateAccess="true", ClampMin="0.05"))
+	float ExecutionVFXScale = 1.f;
+
 	UFUNCTION(BlueprintPure, Category="Boss|Feedback")
 	FORCEINLINE USoundBase* GetHitPlayerSound() const { return HitPlayerSound; }
 
@@ -214,10 +237,24 @@ public:
 	UFUNCTION(BlueprintPure, Category="Boss|Feedback")
 	FORCEINLINE UParticleSystem* GetBloodVFX() const { return BloodVFX; }
 
+	UFUNCTION(BlueprintPure, Category="Boss|Feedback")
+	FORCEINLINE UNiagaraSystem* GetExecutionVFX() const { return ExecutionVFX; }
+
+	UFUNCTION(BlueprintPure, Category="Boss|Feedback")
+	FORCEINLINE float GetExecutionVFXScale() const { return ExecutionVFXScale; }
+
 	// 检查完整后撤路径是否无阻挡，且预期落点属于当前 BOSS NavAgent 的可行走 NavMesh。
 	UFUNCTION(BlueprintPure, Category="Boss|Movement")
 	bool HasSafeRetreatSpace(
 		float RetreatDistance,
+		float NavProjectionTolerance = 50.f,
+		float MaxLandingHeightDelta = 60.f) const;
+
+	// 检查沿指定水平方向的完整地面位移路径；方向会在内部归一化。
+	UFUNCTION(BlueprintPure, Category="Boss|Movement")
+	bool HasSafeGroundTravel(
+		const FVector& Direction,
+		float Distance,
 		float NavProjectionTolerance = 50.f,
 		float MaxLandingHeightDelta = 60.f) const;
 	

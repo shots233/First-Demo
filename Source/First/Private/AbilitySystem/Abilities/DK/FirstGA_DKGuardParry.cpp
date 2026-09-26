@@ -1,9 +1,7 @@
 #include "AbilitySystem/Abilities/DK/FirstGA_DKGuardParry.h"
 
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
-#include "Abilities/Tasks/AbilityTask_WaitDelay.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
-#include "Abilities/Tasks/AbilityTask_WaitInputRelease.h"
 #include "AbilitySystem/FirstAbilitySystemComponent.h"
 #include "AbilitySystem/FirstAttributeSet.h"
 #include "Animation/AnimInstance.h"
@@ -11,9 +9,11 @@
 #include "Character/DKCharacter.h"
 #include "Components/Combat/DKCombatComponent.h"
 #include "Components/Combat/DKDefenseComponent.h"
-#include "Components/Targeting/DKTargetLockComponent.h"
+#include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/RootMotionSource.h"
 #include "MyGameplayTags.h"
+#include "Types/FirstGuardHitEventData.h"
 
 UFirstGA_DKGuardParry::UFirstGA_DKGuardParry()
 {
@@ -61,6 +61,19 @@ bool UFirstGA_DKGuardParry::CanActivateAbility(
 		return false;
 	}
 
+	if (!MeetsGuardRequirements(ActorInfo))
+	{
+		return false;
+	}
+
+	const UAbilitySystemComponent* ASC = ActorInfo->AbilitySystemComponent.Get();
+	// 攻击中只有动画明确开放 By.Parry 取消窗口时才允许举剑。
+	return !ASC->HasMatchingGameplayTag(MyGameplayTags::DK_Status_Attacking) ||
+		ASC->HasMatchingGameplayTag(MyGameplayTags::DK_Status_Action_Cancelable_By_Parry);
+}
+
+bool UFirstGA_DKGuardParry::MeetsGuardRequirements(const FGameplayAbilityActorInfo* ActorInfo) const
+{
 	const ADKCharacter* DK = ActorInfo? Cast<ADKCharacter>(ActorInfo->AvatarActor.Get()): nullptr;
 	const UAbilitySystemComponent* ASC = ActorInfo? ActorInfo->AbilitySystemComponent.Get(): nullptr;
 
@@ -88,15 +101,7 @@ bool UFirstGA_DKGuardParry::CanActivateAbility(
 		return false;
 	}
 
-	const bool bIsAttacking = ASC->HasMatchingGameplayTag(MyGameplayTags::DK_Status_Attacking);
-
-	if (!bIsAttacking)
-	{
-		return true;
-	}
-
-	// 攻击中只有动画明确开放 By.Parry 取消窗口时才允许举剑。
-	return ASC->HasMatchingGameplayTag(MyGameplayTags::DK_Status_Action_Cancelable_By_Parry);
+	return true;
 }
 
 void UFirstGA_DKGuardParry::ActivateAbility(
@@ -132,36 +137,22 @@ void UFirstGA_DKGuardParry::ActivateAbility(
 
 	bExitRequested = false;
 	bParryRiposteActive = false;
-	bTargetLockWasActiveAtStart =DK->GetTargetLockComponent() &&DK->GetTargetLockComponent()->IsTargetLocked();
-
-	ASC->AddLooseGameplayTag(MyGameplayTags::DK_Status_Blocking);
-	bOwnsBlockingTag = true;
-
-	ASC->AddLooseGameplayTag(MyGameplayTags::DK_Status_ParryWindow);
-	bOwnsParryWindowTag = true;
+	bGuardMontageCompleted = false;
+	bChainWindowConsumed = false;
+	const FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromHandle(Handle);
+	bGuardInputHeld = Spec && Spec->InputPressed;
+	ClearBufferedParryInput();
+	CloseParryChainWindow();
+	ActiveGuardMontage = DK->GetGuardParryMontage();
 
 	if (UCharacterMovementComponent* Movement = DK->GetCharacterMovement())
 	{
-		bSavedOrientRotationToMovement = Movement->bOrientRotationToMovement;
-		bSavedUseControllerDesiredRotation =Movement->bUseControllerDesiredRotation;
 		bSavedMovementState = true;
 
 		Movement->StopMovementImmediately();
 		Movement->MaxWalkSpeed = Defense->GetGuardMoveSpeed();
-		Movement->bOrientRotationToMovement = false;
-		Movement->bUseControllerDesiredRotation = true;
+		DK->SetControllerFacingOverride(this, true);
 	}
-
-	// 监听输入松开。true 表示如果松开边沿比任务建立更早，也立即回调。
-	UAbilityTask_WaitInputRelease* ReleaseTask =UAbilityTask_WaitInputRelease::WaitInputRelease(this, true);
-	ReleaseTask->OnRelease.AddDynamic(this,&ThisClass::HandleInputReleased);
-	ReleaseTask->ReadyForActivation();
-
-	// 弹反窗口只存在前 0.15 秒；Blocking 不受这个 Delay 影响。
-	UAbilityTask_WaitDelay* ParryWindowTask =
-		UAbilityTask_WaitDelay::WaitDelay(this,Defense->GetParryWindowDuration());
-	ParryWindowTask->OnFinish.AddDynamic(this,&ThisClass::HandleParryWindowElapsed);
-	ParryWindowTask->ReadyForActivation();
 
 	UAbilityTask_WaitGameplayEvent* GuardHitTask =
 		UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(
@@ -183,22 +174,30 @@ void UFirstGA_DKGuardParry::ActivateAbility(
 	ParrySuccessTask->EventReceived.AddDynamic(this,&ThisClass::HandleParrySuccess);
 	ParrySuccessTask->ReadyForActivation();
 
-	// 连锁弹反请求：角色层只在 ParryChainWindow 标签存在时把弹反按键转成本事件。
-	UAbilityTask_WaitGameplayEvent* ParryChainTask =
+	// Notify 只报告动画窗口；标签、输入缓冲和消费状态都属于本技能实例。
+	UAbilityTask_WaitGameplayEvent* ChainOpenTask =
 		UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(
-			this,
-			MyGameplayTags::DK_Event_ParryChainRequest,
-			nullptr,
-			false,
-			true);
-	ParryChainTask->EventReceived.AddDynamic(this,&ThisClass::HandleParryChainPressed);
-	ParryChainTask->ReadyForActivation();
+			this, MyGameplayTags::DK_Event_ParryChainWindow_Open, nullptr, false, true);
+	ChainOpenTask->EventReceived.AddDynamic(this, &ThisClass::HandleParryChainWindowOpened);
+	ChainOpenTask->ReadyForActivation();
 
-	ActiveGuardMontage = DK->GetGuardParryMontage();
+	UAbilityTask_WaitGameplayEvent* ChainCloseTask =
+		UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(
+			this, MyGameplayTags::DK_Event_ParryChainWindow_Close, nullptr, false, true);
+	ChainCloseTask->EventReceived.AddDynamic(this, &ThisClass::HandleParryChainWindowClosed);
+	ChainCloseTask->ReadyForActivation();
+
+	ReopenParryWindow();
 	if (!ActiveGuardMontage)
 	{
-		// 没有表现资源时仍允许测试标签和数值；松开后正常结束。
+		// 没有表现资源时仍保留完整判定；计时到期后按是否仍按住决定退出。
 		return;
+	}
+
+	GuardAnimInstance = DK->GetMesh() ? DK->GetMesh()->GetAnimInstance() : nullptr;
+	if (UAnimInstance* AnimInstance = GuardAnimInstance.Get())
+	{
+		AnimInstance->OnMontageSectionChanged.AddUniqueDynamic(this, &ThisClass::HandleMontageSectionChanged);
 	}
 
 	UAbilityTask_PlayMontageAndWait* MontageTask =
@@ -217,71 +216,356 @@ void UFirstGA_DKGuardParry::ActivateAbility(
 
 void UFirstGA_DKGuardParry::HandleParryWindowElapsed()
 {
+	if (!IsActive())
+	{
+		return;
+	}
+
+	// 成功演出可以先结束，但退出状态不能阻止已接受的完整判定按时清理。
 	RemoveParryWindowTag();
+	if (bGuardMontageCompleted || (bParryRiposteActive && !ActiveGuardMontage))
+	{
+		FinishGuard(false);
+	}
+	else if (!bExitRequested && (!bGuardInputHeld || !bOwnsBlockingTag) && !bParryRiposteActive)
+	{
+		BeginGuardExit();
+	}
 }
 
-void UFirstGA_DKGuardParry::HandleInputReleased(float TimeHeld)
+void UFirstGA_DKGuardParry::InputPressed(const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo)
 {
-	BeginGuardExit();
+	Super::InputPressed(Handle, ActorInfo, ActivationInfo);
+	if (!IsActive() || bGuardInputHeld)
+	{
+		return;
+	}
+	bGuardInputHeld = true;
+
+	if (bExitRequested || bGuardMontageCompleted)
+	{
+		return;
+	}
+
+	const ADKCharacter* DK = ActorInfo ? Cast<ADKCharacter>(ActorInfo->AvatarActor.Get()) : nullptr;
+	const UDKDefenseComponent* Defense = DK ? DK->GetDKDefenseComponent() : nullptr;
+	if (!Defense || !MeetsGuardRequirements(ActorInfo))
+	{
+		return;
+	}
+
+	// 松开再按住可以恢复普通格挡；这一步本身不刷新弹反计时。
+	if (!bOwnsBlockingTag)
+	{
+		GetFirstAbilitySystemComponentFromActorInfo()->AddLooseGameplayTag(MyGameplayTags::DK_Status_Blocking);
+		bOwnsBlockingTag = true;
+	}
+	UpdateParryMontageExit();
+	// 只有成功演出允许接下一次弹反；持续按住不会产生新的按下边沿。
+	if (!bParryRiposteActive || bChainWindowConsumed)
+	{
+		return;
+	}
+
+	const float BufferDuration = FMath::Max(0.f, Defense->GetParryInputBufferDuration());
+	if (ActiveChainWindowSources.IsEmpty() && BufferDuration <= 0.f)
+	{
+		return;
+	}
+	// 仅保存最近一次点按。松开不清缓存，消费后也不会自动排队下一轮。
+	BufferedParryInputExpiresAt = GetWorld()->GetTimeSeconds() + BufferDuration;
+	TryConsumeBufferedParryInput();
+}
+
+void UFirstGA_DKGuardParry::InputReleased(const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo)
+{
+	Super::InputReleased(Handle, ActorInfo, ActivationInfo);
+	if (!IsActive() || bExitRequested)
+	{
+		return;
+	}
+	bGuardInputHeld = false;
+	// 松开只停止持续格挡；本次按下取得的完整弹反窗口仍由唯一计时器关闭。
+	RemoveBlockingTag();
+	StopGuardPushback();
+	UpdateParryMontageExit();
+	if (!bOwnsParryWindowTag && !bParryRiposteActive)
+	{
+		BeginGuardExit();
+	}
 }
 
 void UFirstGA_DKGuardParry::HandleGuardHit(FGameplayEventData Payload)
 {
 	// 反击演出期间不再跳 Hit 段：格挡数值照常结算，表现保持 Parry 段完整。
-	if (!bExitRequested && !bParryRiposteActive)
+	if (IsActive() && !bExitRequested && !bParryRiposteActive)
 	{
 		JumpToGuardSection(TEXT("Hit"));
+		StartGuardPushback(Payload);
 	}
 }
 
-void UFirstGA_DKGuardParry::HandleParrySuccess(FGameplayEventData Payload)
+void UFirstGA_DKGuardParry::StartGuardPushback(const FGameplayEventData& Payload)
 {
-	if (!bExitRequested)
-	{
-		// 进入反击演出：从这一刻起松键不再截断动画（方案 A）。
-		bParryRiposteActive = true;
-		JumpToGuardSection(TEXT("Parry"));
-	}
-}
-
-void UFirstGA_DKGuardParry::HandleParryChainPressed(FGameplayEventData Payload)
-{
-	// "按了才连"：本事件只由按键边沿产生；退出流程中不连锁。
-	if (bExitRequested || !IsActive())
+	// 新的一击替换剩余推退，不累加速度或排队补位移。
+	StopGuardPushback();
+	ADKCharacter* DK = GetDKCharacterFromActorInfo();
+	UCharacterMovementComponent* Movement = DK ? DK->GetCharacterMovement() : nullptr;
+	const UFirstGuardHitEventData* HitData = Cast<UFirstGuardHitEventData>(Payload.OptionalObject.Get());
+	if (!IsActive() || bExitRequested || bParryRiposteActive || !bOwnsBlockingTag ||
+		!Movement || !Movement->IsMovingOnGround() || !HitData ||
+		!FMath::IsFinite(HitData->GuardPushbackDistance) || !FMath::IsFinite(HitData->GuardPushbackDuration) ||
+		HitData->GuardPushbackDistance <= 0.f || HitData->GuardPushbackDuration <= 0.f)
 	{
 		return;
 	}
 
-	// 跳回 Start 段重接格挡表现并复位反击状态：
-	// 此后格挡命中/弹反成功/松键各路径都走原有逻辑。
-	// 播放头离开 Parry 段会触发 ANS_ParryChainWindow::NotifyEnd 摘掉窗口标签，
-	// 一次窗口通过只连锁一次。
-	bParryRiposteActive = false;
-	JumpToGuardSection(TEXT("Start"));
-
-	ReopenParryWindow();
-
-	// 重臂松开监听：原来的 WaitInputRelease 已消费过，不重臂会导致
-	// 连锁后的这轮格挡无法通过松键退出。
-	if (UFirstAbilitySystemComponent* ASC = GetFirstAbilitySystemComponentFromActorInfo())
+	FVector Direction = Payload.Instigator
+		? (DK->GetActorLocation() - Payload.Instigator->GetActorLocation()).GetSafeNormal2D()
+		: FVector::ZeroVector;
+	if (Direction.IsNearlyZero())
 	{
-		if (const FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromHandle(CurrentSpecHandle))
-		{
-			// 连锁触发点就是按下边沿，此刻按键通常仍按住：等真实松开边沿。
-			// 极短点按已松开的极少数情况传 true，让任务立即补发松开回调，
-			// 本轮连锁按"点按"语义正常进入退出流程。
-			const bool bAlreadyReleased = !Spec->InputPressed;
+		Direction = -DK->GetActorForwardVector().GetSafeNormal2D();
+	}
 
-			UAbilityTask_WaitInputRelease* ReleaseTask =
-				UAbilityTask_WaitInputRelease::WaitInputRelease(this, bAlreadyReleased);
-			ReleaseTask->OnRelease.AddDynamic(this,&ThisClass::HandleInputReleased);
-			ReleaseTask->ReadyForActivation();
+	const float Duration = FMath::Max(HitData->GuardPushbackDuration, 0.001f);
+	TSharedPtr<FRootMotionSource_ConstantForce> Pushback = MakeShared<FRootMotionSource_ConstantForce>();
+	Pushback->InstanceName = TEXT("FirstGuardPushback");
+	Pushback->AccumulateMode = ERootMotionAccumulateMode::Override;
+	Pushback->Priority = 5;
+	Pushback->Force = Direction * (HitData->GuardPushbackDistance / Duration);
+	Pushback->Duration = Duration;
+	// 让 CharacterMovement 处理地面、台阶和碰撞，不用 LaunchCharacter 切进腾空。
+	Pushback->Settings.SetFlag(ERootMotionSourceSettingsFlags::IgnoreZAccumulate);
+	// 最后一帧只施加剩余时长的位移，避免低帧率时超出配置距离。
+	Pushback->Settings.UnSetFlag(ERootMotionSourceSettingsFlags::DisablePartialEndTick);
+	Pushback->FinishVelocityParams.Mode = ERootMotionFinishVelocityMode::ClampVelocity;
+	Pushback->FinishVelocityParams.ClampVelocity = 0.f;
+	GuardPushbackSourceID = Movement->ApplyRootMotionSource(Pushback);
+}
+
+void UFirstGA_DKGuardParry::StopGuardPushback()
+{
+	if (!GuardPushbackSourceID.IsSet())
+	{
+		return;
+	}
+	ADKCharacter* DK = GetDKCharacterFromActorInfo();
+	UCharacterMovementComponent* Movement = DK ? DK->GetCharacterMovement() : nullptr;
+	const TSharedPtr<FRootMotionSource> Pushback = Movement
+		? Movement->GetRootMotionSourceByID(GuardPushbackSourceID.GetValue()) : nullptr;
+	if (Pushback.IsValid() && Pushback->InstanceName == TEXT("FirstGuardPushback"))
+	{
+		// 移除在下一次移动更新才生效；现在收掉残余水平速度，
+		// 同时禁用延迟结束时的归零，避免覆盖随后启动的闪避速度。
+		Pushback->FinishVelocityParams.Mode = ERootMotionFinishVelocityMode::MaintainLastRootMotionVelocity;
+		// 动画或碰撞回调可能发生在本帧源清理之后，立即清掉待应用的推力。
+		StaticCastSharedPtr<FRootMotionSource_ConstantForce>(Pushback)->Force = FVector::ZeroVector;
+		Pushback->RootMotionParams.Clear();
+		// 清零的旧 Override 也会占住优先级；改为零贡献 Additive，让同帧新推退生效。
+		Pushback->AccumulateMode = ERootMotionAccumulateMode::Additive;
+		Movement->RemoveRootMotionSourceByID(GuardPushbackSourceID.GetValue());
+		if (Pushback->GetTime() > 0.f)
+		{
+			Movement->Velocity.X = 0.f;
+			Movement->Velocity.Y = 0.f;
 		}
+	}
+	GuardPushbackSourceID.Reset();
+}
+
+void UFirstGA_DKGuardParry::HandleParrySuccess(FGameplayEventData Payload)
+{
+	StopGuardPushback();
+	if (IsActive() && !bExitRequested && !bParryRiposteActive)
+	{
+		// 同一个 0.15 秒窗口内的多次成功仍结算防御，但不反复重播 Parry。
+		bParryRiposteActive = true;
+		bChainWindowConsumed = false;
+		ClearBufferedParryInput();
+		CloseParryChainWindow();
+		UpdateParryMontageExit();
+		JumpToGuardSection(TEXT("Parry"));
+	}
+}
+
+void UFirstGA_DKGuardParry::UpdateParryMontageExit()
+{
+	UAnimInstance* AnimInstance = GuardAnimInstance.Get();
+	if (!IsActive() || bExitRequested || !bParryRiposteActive || !AnimInstance || !ActiveGuardMontage)
+	{
+		return;
+	}
+
+	// Parry 已经自行放下剑。松键时直接结束，不能接从举剑姿势开始的 Block_Out。
+	// 只修改本次播放实例；演出中再次按下/松开也可以更新出口。
+	FName NextSection = NAME_None;
+	if (bGuardInputHeld && bOwnsBlockingTag && ActiveGuardMontage->IsValidSectionName(TEXT("Loop")))
+	{
+		NextSection = TEXT("Loop");
+	}
+	AnimInstance->Montage_SetNextSection(TEXT("Parry"), NextSection, ActiveGuardMontage);
+
+	if (FAnimMontageInstance* Instance = AnimInstance->GetActiveInstanceForMontage(ActiveGuardMontage))
+	{
+		if (ParryPlaybackInstanceID != Instance->GetInstanceID())
+		{
+			RestoreParryAutoBlendOut();
+			ParryPlaybackInstanceID = Instance->GetInstanceID();
+			bSavedParryAutoBlendOut = Instance->bEnableAutoBlendOut;
+		}
+		// 资产的 -1 会提前一个 BlendOut 时长结束活动状态，截断末尾连锁。
+		// 保留完整 Parry，实际到段尾后再按原混出参数淡回移动姿势。
+		Instance->bEnableAutoBlendOut = false;
+		GetWorld()->GetTimerManager().SetTimer(ParryPlaybackEndTimerHandle, this,
+			&ThisClass::HandleParryPlaybackEnd, 0.01f, true);
+	}
+}
+
+void UFirstGA_DKGuardParry::HandleParryPlaybackEnd()
+{
+	UAnimInstance* AnimInstance = GuardAnimInstance.Get();
+	FAnimMontageInstance* Instance = AnimInstance
+		? AnimInstance->GetMontageInstanceForID(ParryPlaybackInstanceID) : nullptr;
+	if (!IsActive() || bExitRequested || !bParryRiposteActive || !Instance ||
+		Instance->Montage != ActiveGuardMontage || Instance->IsStopped() ||
+		Instance->GetCurrentSection() != TEXT("Parry"))
+	{
+		RestoreParryAutoBlendOut();
+		return;
+	}
+
+	float SectionStart = 0.f;
+	float SectionEnd = 0.f;
+	ActiveGuardMontage->GetSectionStartAndEndTime(
+		ActiveGuardMontage->GetSectionIndex(TEXT("Parry")), SectionStart, SectionEnd);
+	// 用实际播放位置判断，不按固定秒数猜动画结束；暂停在中间不算完成。
+	if (Instance->IsPlaying() || Instance->GetPosition() < SectionEnd - UE_KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	RestoreParryAutoBlendOut();
+	bParryRiposteActive = false;
+	bExitRequested = true;
+	CloseParryChainWindow();
+	ClearBufferedParryInput();
+	RemoveBlockingTag();
+	// false 表示正常结束；已接受的判定仍由原来的计时器保障完整时长。
+	Instance->Stop(FAlphaBlend(ActiveGuardMontage->BlendOut,
+		ActiveGuardMontage->BlendOut.GetBlendTime() * Instance->DefaultBlendTimeMultiplier), false);
+}
+
+void UFirstGA_DKGuardParry::RestoreParryAutoBlendOut()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ParryPlaybackEndTimerHandle);
+	}
+	if (UAnimInstance* AnimInstance = GuardAnimInstance.Get())
+	{
+		if (FAnimMontageInstance* Instance = AnimInstance->GetMontageInstanceForID(ParryPlaybackInstanceID);
+			Instance && Instance->Montage == ActiveGuardMontage)
+		{
+			Instance->bEnableAutoBlendOut = bSavedParryAutoBlendOut;
+		}
+	}
+	ParryPlaybackInstanceID = INDEX_NONE;
+}
+
+void UFirstGA_DKGuardParry::HandleParryChainWindowOpened(FGameplayEventData Payload)
+{
+	// 原有 ANS 继续放在 GuardParry 蒙太奇的 Parry Section 中。
+	if (!IsActive() || bExitRequested || !bParryRiposteActive || bChainWindowConsumed ||
+		bGuardMontageCompleted || !Payload.OptionalObject || !ActiveGuardMontage ||
+		Payload.OptionalObject2.Get() != ActiveGuardMontage.Get())
+	{
+		return;
+	}
+
+	const ADKCharacter* DK = GetDKCharacterFromActorInfo();
+	const UAnimInstance* AnimInstance = DK && DK->GetMesh() ? DK->GetMesh()->GetAnimInstance() : nullptr;
+	if (!AnimInstance || AnimInstance->Montage_GetCurrentSection(ActiveGuardMontage) != TEXT("Parry"))
+	{
+		return;
+	}
+
+	ActiveChainWindowSources.Add(TWeakObjectPtr<const UObject>(Payload.OptionalObject.Get()));
+	if (!bOwnsParryChainWindowTag)
+	{
+		GetFirstAbilitySystemComponentFromActorInfo()->AddLooseGameplayTag(MyGameplayTags::DK_Status_ParryChainWindow);
+		bOwnsParryChainWindowTag = true;
+	}
+	TryConsumeBufferedParryInput();
+}
+
+void UFirstGA_DKGuardParry::HandleParryChainWindowClosed(FGameplayEventData Payload)
+{
+	if (Payload.OptionalObject2.Get() != ActiveGuardMontage.Get() || !Payload.OptionalObject)
+	{
+		return;
+	}
+	ActiveChainWindowSources.Remove(TWeakObjectPtr<const UObject>(Payload.OptionalObject.Get()));
+	if (ActiveChainWindowSources.IsEmpty())
+	{
+		CloseParryChainWindow();
+	}
+}
+
+void UFirstGA_DKGuardParry::ClearBufferedParryInput()
+{
+	BufferedParryInputExpiresAt = -1.0;
+}
+
+void UFirstGA_DKGuardParry::CloseParryChainWindow()
+{
+	ActiveChainWindowSources.Reset();
+	if (bOwnsParryChainWindowTag)
+	{
+		if (UFirstAbilitySystemComponent* ASC = GetFirstAbilitySystemComponentFromActorInfo())
+		{
+			ASC->RemoveLooseGameplayTag(MyGameplayTags::DK_Status_ParryChainWindow);
+		}
+		bOwnsParryChainWindowTag = false;
+	}
+}
+
+void UFirstGA_DKGuardParry::TryConsumeBufferedParryInput()
+{
+	if (!IsActive() || bExitRequested || !bParryRiposteActive || bChainWindowConsumed ||
+		bGuardMontageCompleted || ActiveChainWindowSources.IsEmpty() || BufferedParryInputExpiresAt < 0.0)
+	{
+		return;
+	}
+	if (GetWorld()->GetTimeSeconds() > BufferedParryInputExpiresAt || !MeetsGuardRequirements(CurrentActorInfo))
+	{
+		ClearBufferedParryInput();
+		return;
+	}
+
+	// 必须在跳段前消费权限；不能依赖下一次动画更新才派发的 NotifyEnd。
+	bChainWindowConsumed = true;
+	CloseParryChainWindow();
+	ClearBufferedParryInput();
+	bParryRiposteActive = false;
+	RestoreParryAutoBlendOut();
+	if (!JumpToGuardSection(TEXT("Start")))
+	{
+		FinishGuard(true);
+		return;
+	}
+	if (IsActive() && !bExitRequested)
+	{
+		// 提前输入即使已经松开，也从实际接招时刻获得完整判定。
+		ReopenParryWindow();
 	}
 }
 
 void UFirstGA_DKGuardParry::ReopenParryWindow()
 {
+	StopGuardPushback();
 	UFirstAbilitySystemComponent* ASC = GetFirstAbilitySystemComponentFromActorInfo();
 	ADKCharacter* DK = GetDKCharacterFromActorInfo();
 	UDKDefenseComponent* Defense = DK ? DK->GetDKDefenseComponent() : nullptr;
@@ -290,25 +574,69 @@ void UFirstGA_DKGuardParry::ReopenParryWindow()
 		return;
 	}
 
-	// 重新挂弹反资格并重启窗口计时；时长沿用格挡组件的 ParryWindowDuration，
-	// 与首次弹反窗口完全同源。RemoveParryWindowTag 按所有权标志清理，可安全复用。
-	ASC->AddLooseGameplayTag(MyGameplayTags::DK_Status_ParryWindow);
-	bOwnsParryWindowTag = true;
-
-	UAbilityTask_WaitDelay* ParryWindowTask =
-		UAbilityTask_WaitDelay::WaitDelay(this, Defense->GetParryWindowDuration());
-	ParryWindowTask->OnFinish.AddDynamic(this,&ThisClass::HandleParryWindowElapsed);
-	ParryWindowTask->ReadyForActivation();
+	GetWorld()->GetTimerManager().ClearTimer(ParryWindowTimerHandle);
+	if (!bOwnsParryWindowTag)
+	{
+		ASC->AddLooseGameplayTag(MyGameplayTags::DK_Status_ParryWindow);
+		bOwnsParryWindowTag = true;
+	}
+	if (bGuardInputHeld && !bOwnsBlockingTag)
+	{
+		ASC->AddLooseGameplayTag(MyGameplayTags::DK_Status_Blocking);
+		bOwnsBlockingTag = true;
+	}
+	GetWorld()->GetTimerManager().SetTimer(ParryWindowTimerHandle,
+		this, &ThisClass::HandleParryWindowElapsed,
+		FMath::Max(Defense->GetParryWindowDuration(), 0.001f), false);
 }
 
 void UFirstGA_DKGuardParry::HandleMontageCompleted()
 {
-	FinishGuard(false);
+	RestoreParryAutoBlendOut();
+	bGuardMontageCompleted = true;
+	CloseParryChainWindow();
+	ClearBufferedParryInput();
+	// 即使表现资源较短，自然播放完毕也不截断已经接受的点按判定。
+	if (!bOwnsParryWindowTag)
+	{
+		FinishGuard(false);
+	}
 }
 
 void UFirstGA_DKGuardParry::HandleMontageInterrupted()
 {
 	FinishGuard(true);
+}
+
+void UFirstGA_DKGuardParry::HandleMontageSectionChanged(UAnimMontage* Montage, FName SectionName, bool bLooped)
+{
+	if (!IsActive() || bExitRequested || Montage != ActiveGuardMontage ||
+		!bParryRiposteActive || SectionName == TEXT("Parry"))
+	{
+		return;
+	}
+	const UAnimInstance* AnimInstance = GuardAnimInstance.Get();
+	// 跳段事件可能排队派发，只处理仍与实际播放位置一致的事件。
+	if (!AnimInstance || AnimInstance->Montage_GetCurrentSection(Montage) != SectionName)
+	{
+		return;
+	}
+	RestoreParryAutoBlendOut();
+	bParryRiposteActive = false;
+	CloseParryChainWindow();
+	ClearBufferedParryInput();
+	if (SectionName == TEXT("End"))
+	{
+		// 已自然进入收势，不再跳一次 End，也不因未到期的测试判定返回格挡。
+		bExitRequested = true;
+		StopGuardPushback();
+		RemoveBlockingTag();
+		return;
+	}
+	if ((!bGuardInputHeld || !bOwnsBlockingTag) && !bOwnsParryWindowTag)
+	{
+		BeginGuardExit();
+	}
 }
 
 void UFirstGA_DKGuardParry::CancelActiveAttackAbilities()
@@ -356,51 +684,38 @@ void UFirstGA_DKGuardParry::RemoveParryWindowTag()
 	bOwnsParryWindowTag = false;
 }
 
-void UFirstGA_DKGuardParry::JumpToGuardSection(FName SectionName)
+bool UFirstGA_DKGuardParry::JumpToGuardSection(FName SectionName)
 {
 	ADKCharacter* DK = GetDKCharacterFromActorInfo();
 	UAnimInstance* AnimInstance =DK && DK->GetMesh() ? DK->GetMesh()->GetAnimInstance() : nullptr;
 
-	if (!AnimInstance || !ActiveGuardMontage ||ActiveGuardMontage->GetSectionIndex(SectionName) == INDEX_NONE)
+	if (!AnimInstance || !ActiveGuardMontage || !AnimInstance->Montage_IsPlaying(ActiveGuardMontage) ||
+		ActiveGuardMontage->GetSectionIndex(SectionName) == INDEX_NONE)
 	{
-		return;
+		return false;
 	}
 
 	AnimInstance->Montage_JumpToSection(SectionName, ActiveGuardMontage);
+	return true;
 }
 
 void UFirstGA_DKGuardParry::BeginGuardExit()
 {
-	if (bExitRequested)
+	if (!IsActive() || bExitRequested || bOwnsParryWindowTag || bParryRiposteActive)
 	{
 		return;
 	}
 
 	bExitRequested = true;
-
-	// 松开第一帧就失去防御资格；End Section 只是表现。
-	RemoveParryWindowTag();
+	StopGuardPushback();
+	CloseParryChainWindow();
+	ClearBufferedParryInput();
 	RemoveBlockingTag();
 
-	// 反击演出进行中：不跳 End 段截断动画，Parry 段完整播完后
-	// 由 HandleMontageCompleted 收势结束整个格挡。
-	if (bParryRiposteActive)
-	{
-		// 没有蒙太奇资产时（纯数值测试模式）没有 OnCompleted 可依赖，直接结束。
-		if (!ActiveGuardMontage)
-		{
-			FinishGuard(false);
-		}
-		return;
-	}
-
-	if (!ActiveGuardMontage ||ActiveGuardMontage->GetSectionIndex(TEXT("End")) == INDEX_NONE)
+	if (!JumpToGuardSection(TEXT("End")))
 	{
 		FinishGuard(false);
-		return;
 	}
-
-	JumpToGuardSection(TEXT("End"));
 }
 
 void UFirstGA_DKGuardParry::FinishGuard(bool bWasCancelled)
@@ -420,6 +735,21 @@ void UFirstGA_DKGuardParry::EndAbility(
 	bool bReplicateEndAbility,
 	bool bWasCancelled)
 {
+	// 先关接招入口，防止结束蒙太奇时的通知回调重新开放旧窗口。
+	bExitRequested = true;
+	RestoreParryAutoBlendOut();
+	StopGuardPushback();
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ParryWindowTimerHandle);
+	}
+	if (UAnimInstance* AnimInstance = GuardAnimInstance.Get())
+	{
+		AnimInstance->OnMontageSectionChanged.RemoveDynamic(this, &ThisClass::HandleMontageSectionChanged);
+	}
+	GuardAnimInstance.Reset();
+	CloseParryChainWindow();
+	ClearBufferedParryInput();
 	RemoveParryWindowTag();
 	RemoveBlockingTag();
 
@@ -431,21 +761,16 @@ void UFirstGA_DKGuardParry::EndAbility(
 			// 不恢复进入 Guard 时的旧快照。Shift 可能在 Guard 期间按下或松开，
 			// 应根据 ADKCharacter 当前保存的跑步状态重新决定 250/500。
 			Movement->MaxWalkSpeed = DK->GetDesiredLocomotionSpeed();
-
-			const bool bTargetLockIsActiveNow =DK->GetTargetLockComponent() &&DK->GetTargetLockComponent()->IsTargetLocked();
-
-			// 锁定模式若在 Guard 期间因目标死亡而自动变化，
-			// TargetLockComponent 已经恢复了正确朝向设置，此处不要用旧快照覆盖。
-			if (bTargetLockIsActiveNow == bTargetLockWasActiveAtStart)
-			{
-				Movement->bOrientRotationToMovement =bSavedOrientRotationToMovement;
-				Movement->bUseControllerDesiredRotation =bSavedUseControllerDesiredRotation;
-			}
 		}
+		// 只释放格挡自己的请求；锁定仍在时继续保持面向目标。
+		DK->SetControllerFacingOverride(this, false);
 	}
 
 	bSavedMovementState = false;
-	bTargetLockWasActiveAtStart = false;
+	bGuardInputHeld = false;
+	bParryRiposteActive = false;
+	bChainWindowConsumed = false;
+	bGuardMontageCompleted = false;
 	ActiveGuardMontage = nullptr;
 
 	// 全函数只能有这一次父类结束调用。

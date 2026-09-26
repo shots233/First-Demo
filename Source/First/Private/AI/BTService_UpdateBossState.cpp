@@ -9,6 +9,7 @@
 #include "BehaviorTree/BlackboardComponent.h"
 #include "Character/BossCharacter.h"
 #include "Controller/BossAIController.h"
+#include "Components/Combat/FirstBossRetaliationComponent.h"
 
 UBTService_UpdateBossState::UBTService_UpdateBossState()
 {
@@ -74,6 +75,11 @@ void UBTService_UpdateBossState::TickNode(UBehaviorTreeComponent& OwnerComp, uin
 		BB->GetValueAsBool(TEXT("bShouldChase"));
 	const bool bPlayerTooFar =
 		BB->GetValueAsBool(TEXT("bPlayerTooFar"));
+	if (Boss->RetaliationComponent)
+	{
+		Boss->RetaliationComponent->UpdateCombatContext(Target,
+			bShouldChase && !bProvokedByDamage && !bTargetNavigationBlocked && !bIsDead);
+	}
 
 	EBossRotationMode DesiredRotationMode =
 		EBossRotationMode::OrientToMovement;

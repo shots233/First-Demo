@@ -5,8 +5,10 @@
 
 #include "Character/BaseCharacter.h"
 #include "Character/DKCharacter.h"
+#include "Components/Combat/DKCombatComponent.h"
 #include "Components/Targeting/DKTargetLockComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "MyGameplayTags.h"
 
 void UFirstDKAnimInstance::NativeInitializeAnimation()
 {
@@ -77,6 +79,7 @@ void UFirstDKAnimInstance::NativeThreadSafeUpdateAnimation(float DeltaSeconds)
 	MoveRight = 0.f;
 	bIsTargetLocked = false;
 	bUseDirectionalLocomotion = false;
+	bWeaponEquipped = false;
 
 	const ADKCharacter* DKCharacter = Cast<ADKCharacter>(OwningCharacter);
 	if (DKCharacter)
@@ -84,6 +87,12 @@ void UFirstDKAnimInstance::NativeThreadSafeUpdateAnimation(float DeltaSeconds)
 		bIsTargetLocked =
 			DKCharacter->GetTargetLockComponent() &&
 			DKCharacter->GetTargetLockComponent()->IsTargetLocked();
+
+		// 装备状态只在持剑时有效；空手时 CurrentEquippedWeaponTag 已被清空。
+		// 与 GA_DKGuardParry::CanActivateAbility 对同一字段的判断同口径。
+		const UDKCombatComponent* Combat = DKCharacter->GetDKCombatComponent();
+		bWeaponEquipped = Combat &&
+			Combat->CurrentEquippedWeaponTag == MyGameplayTags::DK_Weapon_Sword;
 
 		// 锁定和格挡都会关闭“朝移动方向旋转”并改用控制器期望朝向。
 		// AnimBP 以此选择八向移动，但真实的锁定状态仍由 bIsTargetLocked 表示。

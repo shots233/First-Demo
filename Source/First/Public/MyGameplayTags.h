@@ -58,16 +58,19 @@ namespace MyGameplayTags
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Event_GuardHit);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Event_GuardBroken);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Event_ParrySuccess);
+	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Event_ParryChainWindow_Open);
+	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Event_ParryChainWindow_Close);
+	// 保留旧事件 Tag 以兼容已有资产；连锁按键已改由 GuardParry GA 监听输入。
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Event_ParryChainRequest);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Event_ExecutionAbortedByBoss);
 
 	// Defending = 格挡 Ability 整体生命周期；
-	// Blocking = 当前真正能抵消伤害；松开时先移除它，再播放 End。
+	// Blocking = 当前真正能抵消伤害；点按松开后仍保留至本轮弹反窗口结束。
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Status_Defending);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Status_Blocking);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Status_ParryWindow);
-	// 弹反连锁窗口：GuardParry 蒙太奇 Parry 段后半由 ANS_ParryChainWindow 挂载；
-	// 窗口内按下弹反键会把按键转成 DK_Event_ParryChainRequest，原地重开一轮弹反。
+	// 弹反连锁窗口：ANS_ParryChainWindow 发送开/关事件，由 GuardParry GA 管理标签；
+	// GA 在窗口内消费一次按键或有效的提前输入，重开一轮弹反。
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Status_ParryChainWindow);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Status_GuardBroken);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Status_Executing);
@@ -115,6 +118,10 @@ namespace MyGameplayTags
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Cooldown_Attack_ThreeCombo);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Cooldown_Attack_RetreatChargedSlash);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Cooldown_Attack_FiveCombo);
+	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Cooldown_Attack_Pursuit);
+	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Ability_Attack_Pursuit);
+	// 保留以便已有动画通知仍可加载；独立追击不再监听旧派生接点。
+	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Event_PursuitPoint);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Event_RetreatChargedSlash_ChargeBegin);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Event_RetreatChargedSlash_Commit);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Boss_Status_AttackDirectionLocked);
@@ -140,6 +147,7 @@ namespace MyGameplayTags
 	// 状态 Tag 用于 Ability 之间的互斥，不应代替真正的状态变量或动画逻辑。
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Status_Attacking);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Status_Dodging);
+	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Status_DodgeExhausted);
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Status_ChangingWeapon);
 	// 主角普通受击硬直期间存在。
 	FIRST_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(DK_Status_HitReact);
