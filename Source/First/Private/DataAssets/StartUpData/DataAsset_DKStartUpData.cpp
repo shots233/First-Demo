@@ -6,6 +6,16 @@
 #include "AbilitySystem/FirstAbilitySystemComponent.h"
 #include "Types/FirstStructTypes.h"
 
+TArray<TSubclassOf<UGameplayAbility>> UDataAsset_DKStartUpData::GetStartupAbilityClasses() const
+{
+	TArray<TSubclassOf<UGameplayAbility>> Classes = Super::GetStartupAbilityClasses();
+	for (const FFirstDKAbilitySet& AbilitySet : DKStartUpAbilitySets)
+	{
+		if (AbilitySet.IsValid()) Classes.Add(AbilitySet.AbilityToGrant);
+	}
+	return Classes;
+}
+
 void UDataAsset_DKStartUpData::GiveToAbilitySystemComponent(UFirstAbilitySystemComponent* InASCToGive, int32 ApplyLevel)
 {
 	Super::GiveToAbilitySystemComponent(InASCToGive, ApplyLevel);

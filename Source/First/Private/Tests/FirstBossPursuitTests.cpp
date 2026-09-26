@@ -8,12 +8,16 @@
 #include "AbilitySystem/FirstAttributeSet.h"
 #include "AIController.h"
 #include "AISystem.h"
+#include "AI/Tasks/BTTask_BossSelectAttack.h"
+#include "AI/Tasks/BTTask_BossActivateAbilityByTag.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimNotifyQueue.h"
 #include "BehaviorTree/BlackboardComponent.h"
 #include "BehaviorTree/BlackboardData.h"
 #include "BehaviorTree/Blackboard/BlackboardKeyType_Object.h"
+#include "BehaviorTree/Blackboard/BlackboardKeyType_Name.h"
+#include "BehaviorTree/BehaviorTreeComponent.h"
 #include "Character/BossCharacter.h"
 #include "Character/DKCharacter.h"
 #include "Components/BoxComponent.h"
@@ -95,11 +99,18 @@ public:
 		ObjectKey->BaseClass = AActor::StaticClass();
 		Entry.KeyType = ObjectKey;
 		BlackboardData->Keys.Add(Entry);
+		FBlackboardEntry AttackEntry;
+		AttackEntry.EntryName = TEXT("AttackTag");
+		AttackEntry.KeyType = NewObject<UBlackboardKeyType_Name>(BlackboardData.Get());
+		BlackboardData->Keys.Add(AttackEntry);
 		BlackboardData->UpdateKeyIDs();
 		Controller->Possess(Boss);
 		if (!Test.TestTrue(TEXT("The generic AI initializes its target blackboard"),
 			Controller->UseBlackboard(BlackboardData.Get(), Blackboard))) { return; }
 		Blackboard->SetValueAsObject(TEXT("TargetActor"), Target);
+		SelectionComponent.Reset(NewObject<UBehaviorTreeComponent>(Controller));
+		SelectionComponent->RegisterComponent();
+		SelectionComponent->CacheBlackboardComponent(Blackboard);
 
 		ASC = Boss->GetFirstAbilitySystemComponent();
 		InitializeAttributes(Boss, ASC);
@@ -144,6 +155,23 @@ public:
 	int32 StartedCount() const { return StartedMontages.Num(); }
 	int32 BusyDropCount() const { return AttackingTagDrops; }
 	bool HasTag(FGameplayTag Tag) const { return ASC->HasMatchingGameplayTag(Tag); }
+	EBTNodeResult::Type Select(UBTTask_BossSelectAttack& Task)
+	{
+		return Task.ExecuteTask(*SelectionComponent, nullptr);
+	}
+	bool ActivateSelected()
+	{
+		TStrongObjectPtr<UBTTask_BossActivateAbilityByTag> Task(NewObject<UBTTask_BossActivateAbilityByTag>());
+		return Task->ExecuteTask(*SelectionComponent, nullptr) == EBTNodeResult::Succeeded;
+	}
+	float CooldownRemaining(FGameplayTag Tag) const
+	{
+		const auto Times = ASC->GetActiveEffectsTimeRemainingAndDuration(
+			FGameplayEffectQuery::MakeQuery_MatchAnyOwningTags(FGameplayTagContainer(Tag)));
+		return Times.IsEmpty() ? 0.f : Times[0].Key;
+	}
+	void CancelAttacks() { ASC->CancelAllAbilities(); }
+	void Disarm() { ASC->RemoveLooseGameplayTag(MyGameplayTags::Boss_Status_WeaponDrawn); }
 	bool IsActive() const
 	{
 		const FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromHandle(CurrentHandle);
@@ -244,6 +272,7 @@ private:
 	UAnimInstance* Anim = nullptr;
 	UBlackboardComponent* Blackboard = nullptr;
 	TStrongObjectPtr<UBlackboardData> BlackboardData;
+	TStrongObjectPtr<UBehaviorTreeComponent> SelectionComponent;
 	TStrongObjectPtr<UAnimNotify_DKGameplayEvent> PursuitNotify;
 	TSet<int32> StartedInstanceIDs;
 	TArray<UAnimMontage*> StartedMontages;
@@ -355,6 +384,126 @@ bool FFirstBossPursuitUnsafeGroundTest::RunTest(const FString& Parameters)
 	Fixture.AddWall();
 	TestFalse(TEXT("Ground travel cannot cross a blocking wall"), Boss->HasSafeGroundTravel(FVector::ForwardVector, 200.f));
 	TestFalse(TEXT("A clear route still requires navigation data"), Boss->HasSafeGroundTravel(-FVector::ForwardVector, 200.f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFirstBossAttackTableCooldownTest,
+	"First.Combat.BossAttackCooldown.SelectionCommitExpiryAndZero",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFirstBossAttackTableCooldownTest::RunTest(const FString& Parameters)
+{
+	FirstBossPursuitTests::FFixture Fixture(*this);
+	if (!Fixture.IsReady()) return false;
+	TStrongObjectPtr<UBTTask_BossSelectAttack> Select(NewObject<UBTTask_BossSelectAttack>());
+	FBossAttackOption& Normal = Select->AttackOptions.AddDefaulted_GetRef();
+	Normal.AbilityTag = MyGameplayTags::Boss_Ability_Attack_Normal;
+	Normal.CooldownTag = MyGameplayTags::Boss_Cooldown_Attack_Normal;
+	Normal.CooldownDuration = 1.5f;
+	TestEqual(TEXT("The real select task chooses the attack"), Fixture.Select(*Select), EBTNodeResult::Succeeded);
+	TestFalse(TEXT("Selection alone does not consume cooldown"), Fixture.HasTag(Normal.CooldownTag));
+	if (!TestTrue(TEXT("The real activation task starts the selected attack"), Fixture.ActivateSelected())) return false;
+	TestTrue(TEXT("The real GE uses the table duration, not the four-second GA default"),
+		FMath::IsNearlyEqual(Fixture.CooldownRemaining(Normal.CooldownTag), 1.5f, 0.02f));
+	Fixture.CancelAttacks();
+	Normal.CooldownDuration = 0.f;
+	TestEqual(TEXT("Changing future cooldown to zero does not bypass an existing cooldown"),
+		Fixture.Select(*Select), EBTNodeResult::Failed);
+	TestTrue(TEXT("Already applied cooldown duration is preserved"),
+		FMath::IsNearlyEqual(Fixture.CooldownRemaining(Normal.CooldownTag), 1.5f, 0.02f));
+	Fixture.TickFor(1.6f);
+	TestFalse(TEXT("The real cooldown tag expires at the configured time"), Fixture.HasTag(Normal.CooldownTag));
+	TestEqual(TEXT("Expiry makes the attack selectable again"), Fixture.Select(*Select), EBTNodeResult::Succeeded);
+	if (!TestTrue(TEXT("The attack with zero cooldown activates"), Fixture.ActivateSelected())) return false;
+	TestFalse(TEXT("Zero does not create even a transient cooldown tag"), Fixture.HasTag(Normal.CooldownTag));
+	Fixture.CancelAttacks();
+	Normal.CooldownDuration = 20.f;
+	Fixture.Select(*Select);
+	Fixture.Disarm();
+	TestFalse(TEXT("Missing the required weapon tag rejects activation"), Fixture.ActivateSelected());
+	TestFalse(TEXT("Failed activation never consumes the configured cooldown"), Fixture.HasTag(Normal.CooldownTag));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFirstBossAttackTableFallbackTest,
+	"First.Combat.BossAttackCooldown.UnselectedContinuationAndDefaultRestoration",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFirstBossAttackTableFallbackTest::RunTest(const FString& Parameters)
+{
+	FirstBossPursuitTests::FFixture Fixture(*this);
+	if (!Fixture.IsReady()) return false;
+	TStrongObjectPtr<UBTTask_BossSelectAttack> Select(NewObject<UBTTask_BossSelectAttack>());
+	FBossAttackOption Normal;
+	Normal.AbilityTag = MyGameplayTags::Boss_Ability_Attack_Normal;
+	Normal.CooldownTag = MyGameplayTags::Boss_Cooldown_Attack_Normal;
+	Normal.CooldownDuration = 0.5f;
+	FBossAttackOption Three;
+	Three.AbilityTag = MyGameplayTags::Boss_Ability_Attack_ThreeCombo;
+	Three.CooldownTag = MyGameplayTags::Boss_Cooldown_Attack_ThreeCombo;
+	Three.CooldownDuration = 0.75f;
+	Three.MaxRange = 0.f;
+	Select->AttackOptions = { Normal, Three };
+	TestEqual(TEXT("Only normal attack is in range"), Fixture.Select(*Select), EBTNodeResult::Succeeded);
+	if (!Fixture.Start(true)) return false;
+	TestTrue(TEXT("An unselected move activated directly as a continuation still uses its table duration"),
+		FMath::IsNearlyEqual(Fixture.CooldownRemaining(Three.CooldownTag), 0.75f, 0.02f));
+	Fixture.CancelAttacks();
+	Fixture.TickFor(0.85f);
+	Select->AttackOptions.SetNum(1);
+	Select->AttackOptions[0].CooldownDuration = -1.f;
+	Fixture.Select(*Select);
+	if (!Fixture.Start(false)) return false;
+	TestTrue(TEXT("Minus one restores the normal ability's original duration"),
+		FMath::IsNearlyEqual(Fixture.CooldownRemaining(Normal.CooldownTag),
+			GetDefault<UGA_Boss_NormalAttack>()->CooldownDuration, 0.02f));
+	Fixture.CancelAttacks();
+	if (!Fixture.Start(true)) return false;
+	TestTrue(TEXT("Removing a move from the table clears its old override"),
+		FMath::IsNearlyEqual(Fixture.CooldownRemaining(Three.CooldownTag),
+			GetDefault<UGA_Boss_ThreeCombo>()->CooldownDuration, 0.02f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FFirstBossAttackTableIsolationTest,
+	"First.Combat.BossAttackCooldown.CharacterIsolationAndConflictingRows",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FFirstBossAttackTableIsolationTest::RunTest(const FString& Parameters)
+{
+	// Sequential worlds avoid making another world's ticking/frame counter part of this test.
+	TStrongObjectPtr<UBTTask_BossSelectAttack> SharedSelect(NewObject<UBTTask_BossSelectAttack>());
+	FBossAttackOption& Normal = SharedSelect->AttackOptions.AddDefaulted_GetRef();
+	Normal.AbilityTag = MyGameplayTags::Boss_Ability_Attack_Normal;
+	Normal.CooldownTag = MyGameplayTags::Boss_Cooldown_Attack_Normal;
+	Normal.CooldownDuration = 20.f;
+	const float OriginalDefault = GetDefault<UGA_Boss_NormalAttack>()->CooldownDuration;
+	{
+		FirstBossPursuitTests::FFixture FirstBoss(*this);
+		if (!FirstBoss.IsReady()) return false;
+		FirstBoss.Select(*SharedSelect);
+		if (!FirstBoss.Start(false)) return false;
+		TestTrue(TEXT("The first boss gets its configured twenty-second effect"),
+			FMath::IsNearlyEqual(FirstBoss.CooldownRemaining(MyGameplayTags::Boss_Cooldown_Attack_Normal), 20.f, 0.02f));
+	}
+	{
+		FirstBossPursuitTests::FFixture SecondBoss(*this);
+		if (!SecondBoss.IsReady() || !SecondBoss.Start(false)) return false;
+		TestTrue(TEXT("Another boss without a table override keeps its own default cooldown"),
+			FMath::IsNearlyEqual(SecondBoss.CooldownRemaining(MyGameplayTags::Boss_Cooldown_Attack_Normal), OriginalDefault, 0.02f));
+	}
+	{
+		FirstBossPursuitTests::FFixture ThirdBoss(*this);
+		if (!ThirdBoss.IsReady()) return false;
+		FBossAttackOption Duplicate = SharedSelect->AttackOptions[0];
+		Duplicate.CooldownDuration = 30.f;
+		SharedSelect->AttackOptions.Add(Duplicate);
+		ThirdBoss.Select(*SharedSelect);
+		if (!ThirdBoss.Start(false)) return false;
+		TestTrue(TEXT("Conflicting duplicate rows fall back to the ability default instead of array order"),
+			FMath::IsNearlyEqual(ThirdBoss.CooldownRemaining(MyGameplayTags::Boss_Cooldown_Attack_Normal), OriginalDefault, 0.02f));
+	}
+	TestEqual(TEXT("Shared class defaults were never mutated"), GetDefault<UGA_Boss_NormalAttack>()->CooldownDuration, OriginalDefault);
 	return true;
 }
 

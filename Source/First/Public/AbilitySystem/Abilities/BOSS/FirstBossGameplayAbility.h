@@ -20,7 +20,7 @@ class FIRST_API UFirstBossGameplayAbility : public UFirstGameplayAbility
 {
 	GENERATED_BODY()
 public:
-	// 本次招式的冷却秒数（派生类构造函数里设置）。
+	// 默认冷却秒数。Boss Select Attack 可为当前角色的普通招式覆盖此值。
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Boss|Cooldown")
 	float CooldownDuration = 3.f;
 
@@ -36,7 +36,7 @@ protected:
 	// 播放 BP_Boss 上配置的"命中玩家"音效与血花（从被击者位置发出）。
 	void PlayBossHitPlayerFeedback(const AActor* TargetActor);
 
-	// 用 CooldownDuration 写入 SetByCaller 后应用冷却 GE。
+	// 优先使用当前 AbilitySpec 的冷却覆盖值，未设置时沿用 CooldownDuration。
 	virtual void ApplyCooldown(
 		const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo,

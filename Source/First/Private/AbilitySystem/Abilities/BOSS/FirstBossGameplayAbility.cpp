@@ -135,6 +135,22 @@ void UFirstBossGameplayAbility::ApplyCooldown(const FGameplayAbilitySpecHandle H
 	FGameplayEffectSpecHandle SpecHandle = MakeOutgoingGameplayEffectSpec(
 		CooldownGE->GetClass(),
 		GetAbilityLevel(Handle, ActorInfo));
+	if (!SpecHandle.IsValid())
+	{
+		return;
+	}
+
+	// 引擎创建 EffectSpec 时会复制当前 AbilitySpec 的 SetByCaller 数据。
+	// 行为树只配置秒数，仍由 CommitAbility 真正应用冷却；选招/激活失败不会扣冷却。
+	const float ConfiguredDuration = SpecHandle.Data->GetSetByCallerMagnitude(
+		MyGameplayTags::Boss_SetByCaller_CooldownDuration, false, CooldownDuration);
+	const float EffectiveDuration = FMath::IsFinite(ConfiguredDuration) && ConfiguredDuration >= 0.f
+		? ConfiguredDuration : CooldownDuration;
+	if (!FMath::IsFinite(EffectiveDuration) || EffectiveDuration <= 0.f)
+	{
+		// 0 表示关闭，不创建零时长 GE（引擎可能把非法时长修正为短暂冷却）。
+		return;
+	}
 
 	// 冷却标签挂到本次 Effect 上，冷却结束自动移除。
 	// GetCooldownTags() 返回 const FGameplayTagContainer*（可能为空），
@@ -145,7 +161,7 @@ void UFirstBossGameplayAbility::ApplyCooldown(const FGameplayAbilitySpecHandle H
 	}
 	SpecHandle.Data->SetSetByCallerMagnitude(
 		MyGameplayTags::Boss_SetByCaller_CooldownDuration,
-		CooldownDuration);
+		EffectiveDuration);
 
 	ApplyGameplayEffectSpecToOwner(Handle, ActorInfo, ActivationInfo, SpecHandle);
 }

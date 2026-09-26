@@ -22,6 +22,9 @@ class FIRST_API UDataAsset_StartUpDataBase : public UDataAsset
 public:
 	// 作用：将数据资产中的初始 Effect 和 Ability 整体交给指定 ASC，是角色出生配置的总入口。
 	virtual void GiveToAbilitySystemComponent(UFirstAbilitySystemComponent* InASCToGive, int32 ApplyLevel = 1);
+
+	// 编辑器工具可读取实际授予的技能默认值，不需要生成角色或授予技能。
+	virtual TArray<TSubclassOf<UGameplayAbility>> GetStartupAbilityClasses() const;
 	
 protected:
 	// 这组能力授予后会在 OnGiveAbility 内立即激活，适合生成初始武器等一次性动作。

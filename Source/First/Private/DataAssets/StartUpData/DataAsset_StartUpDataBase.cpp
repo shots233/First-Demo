@@ -6,6 +6,13 @@
 #include "GameplayEffect.h"
 #include "AbilitySystem/FirstAbilitySystemComponent.h"
 
+TArray<TSubclassOf<UGameplayAbility>> UDataAsset_StartUpDataBase::GetStartupAbilityClasses() const
+{
+	TArray<TSubclassOf<UGameplayAbility>> Classes = ActivateOnGivenAbilities;
+	Classes.Append(ReactiveAbilities);
+	return Classes;
+}
+
 void UDataAsset_StartUpDataBase::GiveToAbilitySystemComponent(UFirstAbilitySystemComponent* InASCToGive, int32 ApplyLevel)
 {
 	check(InASCToGive);
